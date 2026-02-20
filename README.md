@@ -105,7 +105,7 @@ Sigue estos pasos para poner en marcha tu propia instancia de CloudGram Pro:
 
 1. Clonar el repositorio
 Bash
-git clone https://github.com/tu-usuario/cloudgram.git
+git clone https://github.com/daragonp/cloudgram.git
 cd cloudgram
 2. Configurar el Entorno Virtual
 Es recomendable usar un entorno virtual para mantener las dependencias aisladas:
@@ -142,3 +142,5 @@ Usa el flujo de autorización offline para obtener tu código inicial.
 Intercambia ese código por un refresh_token usando el endpoint de token de Dropbox.
 
 Añade el token resultante a tu archivo .env.
+
+💡 Tip de Bienvenida: El comando /start no solo saluda, sino que permite verificar en tiempo real si el bot está correctamente conectado a la base de datos y a las nubes configuradas en el .env.

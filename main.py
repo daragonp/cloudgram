@@ -6,6 +6,12 @@ import numpy as np
 from datetime import datetime
 from dotenv import load_dotenv
 from telegram import BotCommand
+import platform
+import sys
+from telegram.ext import CommandHandler
+from telegram.constants import ParseMode
+import json
+import numpy as np
 
 # 1. CARGA DE ENTORNO
 load_dotenv()
@@ -43,6 +49,70 @@ onedrive_svc = OneDriveService(
     tenant_id=os.getenv("ONEDRIVE_TENANT_ID")
 )
 
+def print_server_welcome():
+    """
+    Realiza un chequeo exhaustivo del entorno y muestra un reporte 
+    de bienvenida en la consola al iniciar el servidor.
+    """
+    # Cargamos variables de entorno
+    load_dotenv()
+    
+    # Diseño visual en consola
+    print("\n" + "╔" + "═"*58 + "╗")
+    print("║" + " "*21 + "☁️  CLOUDGRAM PRO v1.0" + " "*21 + "║")
+    print("║" + " "*18 + "SISTEMA DE GESTIÓN CLOUD" + " "*16 + "║")
+    print("╚" + "═"*58 + "╝")
+
+    # 1. Información del Sistema
+    print(f"📅 Fecha de arranque: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+    print(f"💻 Sistema Operativo: {platform.system()} {platform.release()}")
+    print(f"🐍 Python Versión:  {sys.version.split()[0]}")
+    print("-" * 60)
+
+    # 2. Verificación de Carpetas (Auto-creación)
+    print("📁 VERIFICACIÓN DE DIRECTORIOS:")
+    required_dirs = ['descargas', 'data']
+    for folder in required_dirs:
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+            print(f"   [+] Creado: /{folder}")
+        else:
+            print(f"   [OK] Detectado: /{folder}")
+
+    # 3. Verificación de Base de Datos
+    db_file = "data/cloudgram.db"
+    if os.path.exists(db_file):
+        size_kb = os.path.getsize(db_file) / 1024
+        print(f"🗄️  Base de Datos:  DETECTADA ({size_kb:.2f} KB)")
+    else:
+        print("🗄️  Base de Datos:  NUEVA (se inicializará al primer registro)")
+
+    # 4. Verificación de Variables Críticas (.env)
+    print("-" * 60)
+    print("🔑 CHEQUEO DE CREDENCIALES (.env):")
+    critical_keys = [
+        'TELEGRAM_BOT_TOKEN', 
+        'OPENAI_API_KEY', 
+        'DROPBOX_APP_KEY',
+        'DROPBOX_REFRESH_TOKEN'
+    ]
+    
+    all_ok = True
+    for key in critical_keys:
+        val = os.getenv(key)
+        if not val or val == "tu_token_aqui":
+            print(f"   [❌] Faltante: {key}")
+            all_ok = False
+        else:
+            # Mostramos solo los primeros 4 caracteres por seguridad
+            print(f"   [✅] Configurada: {key} ({val[:4]}***)")
+
+    print("-" * 60)
+    if all_ok:
+        print("🚀 ¡SERVIDOR LISTO! Conectando con la API de Telegram...")
+    else:
+        print("⚠️  ADVERTENCIA: Faltan llaves. El bot podría no funcionar.")
+    print("═" * 60 + "\n")
 # 3. FUNCIONES DE COMANDO
 async def list_files_command(update, context):
     files = db.get_last_files(20)
@@ -334,38 +404,71 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # .
 # 5. BÚSQUEDA IA Y ELIMINAR
+
 async def search_ia_command(update, context):
     query_text = " ".join(context.args).lower()
+    
     if not query_text:
         return await update.message.reply_text("🔎 Uso: `/buscar_ia concepto`")
     
+    # 1. Mensaje inicial
     msg = await update.message.reply_text("🤖 Analizando base de datos...")
-    query_vector = await AIHandler.get_embedding(query_text)
-    files = db.get_all_with_embeddings()
-    results = []
     
-    for f_id, name, url, service, content, emb_json in files:
-        if not emb_json: continue
-        emb = json.loads(emb_json)
-        # Similitud de coseno
-        score = np.dot(query_vector, emb) / (np.linalg.norm(query_vector) * np.linalg.norm(emb))
-        # Refuerzo por palabra clave exacta (insensible a mayúsculas)
-        if query_text in (content or "").lower() or query_text in name.lower():
-            score += 0.2
-            
-        if score > 0.60:
-            results.append((score, name, url, service))
-    
-    results.sort(key=lambda x: x[0], reverse=True)
-    
-    if not results:
-        return await msg.edit_text("❌ No encontré nada relacionado.")
-    
-    out = "🤖 *Resultados de búsqueda inteligente:*\n\n"
-    for s, n, u, sv in results[:5]:
-        out += f"🔹 [{n}]({u}) \n    _Servicio: {sv.capitalize()}_ (Confianza: {int(s*100)}%)\n\n"
-    
-    await msg.edit_text(out, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+    try:
+        # 2. Obtener Embedding de la consulta
+        query_vector = await AIHandler.get_embedding(query_text)
+        if not query_vector:
+            return await msg.edit_text("❌ No pude procesar tu búsqueda (Error de IA).")
+
+        # 3. Obtener archivos (Asegúrate de que db_handler devuelva los 6 valores)
+        files = db.get_all_with_embeddings()
+        results = []
+        
+        # 4. Procesar similitud
+        for f_id, name, url, service, content, emb_json in files:
+            try:
+                if not emb_json or emb_json in ["error_limit", "[]"]: 
+                    continue
+                
+                emb = json.loads(emb_json)
+                
+                # Similitud de coseno
+                score = np.dot(query_vector, emb) / (np.linalg.norm(query_vector) * np.linalg.norm(emb))
+                
+                # Refuerzo por palabra clave
+                if query_text in (content or "").lower() or query_text in name.lower():
+                    score += 0.35
+                    
+                if score > 0.30:
+                    results.append((score, name, url, service))
+            except:
+                continue # Si un archivo está corrupto, saltamos al siguiente
+        
+        # 5. Mostrar resultados
+        results.sort(key=lambda x: x[0], reverse=True)
+        
+        if not results:
+            return await msg.edit_text("❌ No encontré nada relacionado con ese contexto.")
+        
+        out = "🤖 *Resultados de búsqueda inteligente:*\n\n"
+        for s, n, u, sv in results[:5]:
+            # Limitar score a 100% máximo
+            final_score = min(int(s * 100), 100)
+            out += f"🔹 [{n}]({u}) \n    _Servicio: {sv.capitalize()}_ (Confianza: {final_score}%)\n\n"
+        
+        await msg.edit_text(out, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+
+    except Exception as e:
+        print(f"❌ ERROR CRÍTICO EN BUSQUEDA: {e}")
+        await msg.edit_text("⚠️ Ocurrió un error inesperado. El proceso ha sido liberado.")
+
+async def cancelar_handler(update, context):
+    """Limpia cualquier estado y responde con éxito"""
+    user_name = update.effective_user.first_name
+    await update.message.reply_text(
+        f"👋 ¡Entendido, {user_name}! He detenido cualquier proceso activo.\n"
+        "Estoy listo para tu siguiente búsqueda o archivo."
+    )
 
 async def delete_command(update, context):
     if not context.args:
@@ -448,17 +551,20 @@ async def post_init(application):
     ])
 
 if __name__ == '__main__':
+    print_server_welcome()
     if not os.path.exists("descargas"):
         os.makedirs("descargas")
     
     app = ApplicationBuilder().token(os.getenv("TELEGRAM_BOT_TOKEN")).post_init(post_init).build()
     
+    # --- NO OLVIDES REGISTRARLOS ---
     # Comandos principales
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("listar", list_files_command))
     app.add_handler(CommandHandler("buscar", search_command))
     app.add_handler(CommandHandler("buscar_ia", search_ia_command))
     app.add_handler(CommandHandler("eliminar", delete_command))
+    app.add_handler(CommandHandler(["cancelar", "salir", "stop"], cancelar_handler))
     
     # Manejo de archivos y multimedia
     app.add_handler(MessageHandler(

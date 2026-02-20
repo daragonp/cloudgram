@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card bg-dark text-white border-0 shadow-lg">
+                <div class="card-header bg-transparent border-bottom border-secondary p-4">
+                    <h3 class="mb-0">👤 Mi Perfil</h3>
+                </div>
+                <div class="card-body p-4">
+                    <form action="/update-profile" method="POST">
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label text-info">Nombre Completo</label>
+                                <input type="text" name="nombre" class="form-control bg-secondary text-white border-0" value="{{ user.nombre }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label text-info">Email</label>
+                                <input type="email" class="form-control bg-dark text-white border-secondary" value="{{ user.email }}" readonly>
+                            </div>
+                        </div>
+                        <div class="mb-4">
+                            <label class="form-label text-info">Cambiar Contraseña</label>
+                            <input type="password" name="new_password" class="form-control bg-secondary text-white border-0" placeholder="Dejar en blanco para no cambiar">
+                        </div>
+                        <button type="submit" class="btn btn-info w-100 fw-bold">Guardar Cambios</button>
+                    </form>
+                    <hr class="my-4 border-secondary">
+                    <a href="/reset-password" class="text-info small">¿Olvidaste tu contraseña? Iniciar recuperación</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -18,6 +18,52 @@ geolocator = Nominatim(user_agent="cloudgram_bot")
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✨ *CloudGram Pro Activo*", parse_mode=ParseMode.MARKDOWN)
 
+async def buscar_ia_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Maneja el comando /buscar_ia [pregunta de contexto]"""
+    
+    # 1. Verificar si el usuario escribió algo después del comando
+    if not context.args:
+        await update.message.reply_text(
+            "🔎 *Uso:* `/buscar_ia ¿dónde está el contrato de alquiler?`",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+
+    query = " ".join(context.args)
+    espera_msg = await update.message.reply_text("🤖 Consultando a mi memoria neuronal...")
+
+    try:
+        # 2. Generar el Embedding de la pregunta del usuario usando OpenAI
+        # (Asegúrate de tener definido 'openai_client' globalmente o importado)
+        from main import openai_client 
+        
+        response = openai_client.embeddings.create(
+            input=[query],
+            model="text-embedding-3-small"
+        )
+        query_vector = response.data[0].embedding
+
+        # 3. Llamar a la función que añadimos a DatabaseHandler
+        # resultados trae: (id, name, url, similarity)
+        from main import db # Importamos la instancia de la DB
+        resultados = db.search_semantic(query_vector, limit=3)
+
+        # 4. Filtrar por un umbral de confianza (ej: 0.3)
+        if resultados and resultados[0][3] > 0.3:
+            texto_respuesta = "🎯 *He encontrado estos archivos por contexto:*\n\n"
+            for res in resultados:
+                # res[3] es la similitud. La convertimos a porcentaje para el usuario
+                porcentaje = int(res[3] * 100)
+                texto_respuesta += f"📄 *{res[1]}* ({porcentaje}% coincidencia)\n🔗 [Ver archivo]({res[2]})\n\n"
+            
+            await espera_msg.edit_text(texto_respuesta, parse_mode=ParseMode.MARKDOWN)
+        else:
+            await espera_msg.edit_text("😔 No encontré nada que coincida con ese contexto. Intenta con otras palabras.")
+
+    except Exception as e:
+        print(f"Error en buscar_ia: {e}")
+        await espera_msg.edit_text("❌ Ocurrió un error al procesar la búsqueda con IA.")
+        
 async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_id, file_name, file_type = None, "archivo_desconocido", "documento"
     ts = int(time.time())

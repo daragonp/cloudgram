@@ -1,0 +1,66 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+    .hero-section {
+        padding: 100px 0;
+        background: radial-gradient(circle at top right, #003366, #0b0e14);
+        border-radius: 20px;
+        margin-bottom: 50px;
+    }
+    .text-cyan { color: #00d4ff; }
+    .btn-cloudgram {
+        background: linear-gradient(90deg, #00d4ff, #007cf0);
+        color: white;
+        border: none;
+        padding: 12px 30px;
+        font-weight: bold;
+        transition: 0.3s;
+    }
+    .btn-cloudgram:hover {
+        transform: scale(1.05);
+        color: white;
+        box-shadow: 0 0 20px rgba(0, 212, 255, 0.4);
+    }
+    .feature-card {
+        background: #161b22;
+        border: 1px solid #30363d;
+        transition: 0.3s;
+    }
+    .feature-card:hover { border-color: #00d4ff; }
+</style>
+
+<div class="hero-section text-center px-4 shadow-lg">
+    <h1 class="display-3 fw-bold">Gestiona tu Nube con <span class="text-cyan">Inteligencia</span></h1>
+    <p class="lead text-light opacity-75 mx-auto" style="max-width: 700px;">
+        CloudGram une la potencia de Telegram con Dropbox y Google Drive, permitiéndote organizar y encontrar archivos usando lenguaje natural.
+    </p>
+    <div class="mt-4">
+        <a href="https://t.me/TuBotUser" class="btn btn-cloudgram btn-lg rounded-pill shadow">EMPEZAR AHORA</a>
+    </div>
+</div>
+
+<div class="row g-4 py-5">
+    <div class="col-md-4">
+        <div class="card h-100 p-4 feature-card shadow-sm border-secondary">
+            <div class="fs-1 mb-3">🔍</div>
+            <h4 class="text-cyan">Búsqueda IA</h4>
+            <p class="text-white-50">No busques por nombre, busca por contexto. Pregunta: <strong>"¿Donde está la foto del contrato?"</strong> y deja que la IA la encuentre por ti.</p>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card h-100 p-4 feature-card shadow-sm border-secondary">
+            <div class="fs-1 mb-3">🎙️</div>
+            <h4 class="text-cyan">Transcripción</h4>
+            <p class="text-white-50">Envía audios y recibe la transcripción automática directo a tu base de datos y servicios de nube.</p>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card h-100 p-4 feature-card shadow-sm border-secondary">
+            <div class="fs-1 mb-3">☁️</div>
+            <h4 class="text-cyan">Multi-Nube</h4>
+            <p class="text-white-50">Sincronización instantánea entre Dropbox y Drive sin salir de tu chat de Telegram.</p>
+        </div>
+    </div>
+</div>
+{% endblock %}

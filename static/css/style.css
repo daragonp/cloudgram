@@ -1,0 +1,46 @@
+    :root {
+        --dark-bg: #0d1117;
+        --card-bg: #161b22;
+        --cyan-cloud: #00d4ff;
+        --text-main: #e6edf3;
+    }
+
+    body { background-color: var(--dark-bg); color: var(--text-main); }
+
+    /* Forzar visibilidad en tablas */
+    .table { color: var(--text-main) !important; }
+    .table thead th { color: var(--cyan-cloud) !important; border-bottom: 2px solid #30363d; }
+    .table td { border-bottom: 1px solid #21262d; vertical-align: middle; }
+
+    /* Inputs legibles */
+    .form-control {
+        background-color: var(--dark-bg) !important;
+        color: white !important;
+        border: 1px solid #30363d !important;
+    }
+    .form-control:focus {
+        border-color: var(--cyan-cloud) !important;
+        box-shadow: 0 0 0 0.25 darkcyan;
+    }
+
+    /* Badge de estatus */
+    .badge-service {
+        background: rgba(0, 212, 255, 0.1);
+        color: var(--cyan-cloud);
+        border: 1px solid var(--cyan-cloud);
+    }
+
+    .card { background-color: #161b22; border: 1px solid #30363d; color: #e6edf3; }
+    .text-cyan { color: #00d4ff !important; }
+    .table { color: #e6edf3 !important; }
+    .table thead th { 
+        background-color: #0d1117 !important; 
+        color: #00d4ff !important; 
+        border-bottom: 2px solid #30363d; 
+    }
+    .table td { border-bottom: 1px solid #21262d; color: #f0f6fc !important; }
+    .table-hover tbody tr:hover { background-color: #1c2128 !important; }
+    
+    /* Clases de utilidad para el badge */
+    .badge-dropbox { background: rgba(0, 212, 255, 0.1); color: #00d4ff; border: 1px solid #00d4ff; }
+    .badge-drive { background: rgba(255, 193, 7, 0.1); color: #ffc107; border: 1px solid #ffc107; }
