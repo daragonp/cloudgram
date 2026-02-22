@@ -8,10 +8,12 @@ import asyncio
 # Importaciones de tu proyecto
 from src.database.db_handler import DatabaseHandler
 from indexador import ejecutar_indexacion_completa, ejecutar_indexacion_paso_a_paso
+from src.services.dropbox_service import DropboxService
+from src.services.google_drive_service import GoogleDriveService
 
 db = DatabaseHandler()
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "una_clave_muy_segura_123")
+app.secret_key = os.getenv("FLASK_SECRET_KEY")
 
 # Configuración de Login
 login_manager = LoginManager()
@@ -99,13 +101,33 @@ def dashboard():
     except Exception as e:
         print(f"❌ Error Dashboard: {e}")
         return render_template('dashboard.html', files=[], total_ia=0, total_fotos=0, total_total=0)
-    
+
 @app.route('/delete/<int:file_id>')
 @login_required
 def delete_file(file_id):
     try:
+        # 1. Obtener info del archivo antes de borrarlo de la DB
+        file_info = db.get_file_by_id(file_id)
+        if not file_info:
+            flash("Archivo no encontrado.", "error")
+            return redirect(url_for('dashboard'))
+
+        name = file_info['name']
+        service = file_info['service']
+
+        # 2. Borrado físico en la nube
+        success_cloud = False
+        if service == 'dropbox':
+            # Dropbox usa el path con /
+            success_cloud = asyncio.run(DropboxService.delete_file(f"/{name}"))
+        elif service == 'drive':
+            success_cloud = asyncio.run(GoogleDriveService.delete_file(name))
+
+        # 3. Borrado en Base de Datos
         db.delete_file_by_id(file_id) 
-        flash(f"✅ Archivo eliminado correctamente.", "success")
+        
+        status = "y de la nube ✅" if success_cloud else "(solo de la DB ⚠️)"
+        flash(f"Archivo `{name}` eliminado {status}.", "success")
     except Exception as e:
         flash(f"❌ Error al eliminar: {e}", "error")
     return redirect(url_for('dashboard'))
@@ -173,5 +195,5 @@ def reset_errors():
     return redirect(url_for('dashboard'))
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 5050))
     app.run(host='0.0.0.0', port=port)

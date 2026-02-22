@@ -95,6 +95,11 @@ class DatabaseHandler:
                 cur.execute('SELECT id, name, cloud_url, service, created_at FROM files ORDER BY created_at DESC LIMIT %s', (limit,))
                 return cur.fetchall()
 
+    def get_file_by_id(self, file_id):
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, name, service, cloud_url FROM files WHERE id = %s", (file_id,))
+                return cur.fetchone() # Esto devolverá un diccionario gracias al RealDictCursor
     # --- IA Y WEB ---
 
     def search_semantic(self, query_embedding, limit=3):
@@ -166,6 +171,7 @@ class DatabaseHandler:
         except Exception as e:
             print(f"❌ Error de conexión a Supabase: {e}")
             return False
+        
     def check_db_type(self):
         if "supabase" in self.db_url.lower() or "postgre" in self.db_url.lower():
             print("🛢️ CONECTADO A: Supabase (PostgreSQL)")

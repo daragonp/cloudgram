@@ -1,24 +1,45 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<div class="row justify-content-center">
+<div class="d-flex align-items-center justify-content-center" style="min-height: 80vh;">
     <div class="col-md-4">
-        <div class="card shadow">
-            <div class="card-body">
-                <h3 class="card-title text-center mb-4">Acceso Admin</h3>
+        <div class="text-center mb-4">
+            <img src="{{ url_for('static', filename='logo/logo.svg') }}" alt="CloudGram Logo" style="width: 120px; filter: drop-shadow(0 0 8px rgba(0,0,0,0.1));">
+            <h2 class="mt-3 fw-bold text-primary">CloudGram</h2>
+            <p class="text-muted">Gestión Inteligente de Archivos</p>
+        </div>
+
+        <div class="card border-0 shadow-lg" style="border-radius: 15px;">
+            <div class="card-body p-5">
+                <h4 class="card-title text-center mb-4 fw-normal">Acceso al Panel</h4>
+                
                 <form method="POST">
-                    <div class="mb-3">
-                        <label class="form-label">Email</label>
-                        <input type="email" name="email" class="form-control" required>
+                    <div class="form-floating mb-3">
+                        <input type="email" name="email" class="form-control" id="floatingInput" placeholder="nombre@ejemplo.com" required>
+                        <label for="floatingInput">Correo electrónico</label>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label">Contraseña</label>
-                        <input type="password" name="password" class="form-control" required>
+                    
+                    <div class="form-floating mb-4">
+                        <input type="password" name="password" class="form-control" id="floatingPassword" placeholder="Contraseña" required>
+                        <label for="floatingPassword">Contraseña</label>
                     </div>
-                    <button type="submit" class="btn btn-primary w-100">Entrar</button>
+
+                    <button type="submit" class="btn btn-primary w-100 py-3 fw-bold shadow-sm" style="border-radius: 10px; transition: 0.3s;">
+                        Entrar al Sistema
+                    </button>
                 </form>
             </div>
         </div>
+        
+        <div class="text-center mt-4">
+            <small class="text-muted">&copy; 2026 CloudGram PRO - Díllinger Aragón Perea</small>
+        </div>
     </div>
 </div>
+
+<style>
+    body { background-color: #f8f9fa; }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
+    .card { transition: transform 0.3s ease; }
+</style>
 {% endblock %}

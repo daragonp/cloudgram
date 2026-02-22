@@ -24,19 +24,19 @@ class DropboxService(CloudService):
             print(f"❌ Error de autenticación en Dropbox: {e}")
             self.dbx = None
             
-    async def upload(self, local_path, file_name):
+    async def upload(self, local_path, file_name, folder="General"):
         if not self.dbx: return None
         try:
+            # Estructura: /General/archivo.jpg
+            # Si quieres subcarpetas: f"/{folder}/{file_name}"
+            cloud_path = f"/{folder}/{file_name}"
+            
             with open(local_path, "rb") as f:
-                # Sube el archivo
-                self.dbx.files_upload(f.read(), f"/{file_name}", mode=WriteMode('overwrite'))
-                
-                # Crea o recupera el link compartido
-                link = self.dbx.sharing_create_shared_link_with_settings(f"/{file_name}")
-                # Forzar descarga/vista directa cambiando dl=0 por dl=1
+                self.dbx.files_upload(f.read(), cloud_path, mode=WriteMode('overwrite'))
+                link = self.dbx.sharing_create_shared_link_with_settings(cloud_path)
                 return link.url.replace('?dl=0', '?dl=1') 
         except Exception as e:
-            print(f"Error subiendo a Dropbox: {e}")
+            print(f"Error Dropbox: {e}")
             return None
     
     async def delete_file(self, path):
