@@ -56,11 +56,49 @@ class GoogleDriveService(CloudService):
         
         return file.get('webViewLink')
 
-    async def list_files(self, path="/"):
+    async def list_files(self, limit=10000):
+            service = self._get_service()
+            # Aumentamos el pageSize para no dejar archivos fuera
+            results = service.files().list(
+                pageSize=limit, 
+                fields="files(id, name)",
+                q="trashed = false" # No indexar la papelera
+            ).execute()
+            items = results.get('files', [])
+            return [item['name'] for item in items]
+    
+    async def download_file_by_name(self, file_name, local_path):
+        service = self._get_service()
+        try:
+            # 1. Buscar el ID por nombre
+            query = f"name = '{file_name}' and trashed = false"
+            res = service.files().list(q=query, fields="files(id)").execute()
+            files = res.get('files', [])
+            if not files: return False
+            
+            file_id = files[0]['id']
+            # 2. Descargar el contenido
+            from googleapiclient.http import MediaIoBaseDownload
+            import io
+            
+            request = service.files().get_media(fileId=file_id)
+            fh = io.FileIO(local_path, 'wb')
+            downloader = MediaIoBaseDownload(fh, request)
+            done = False
+            while done is False:
+                status, done = downloader.next_chunk()
+            fh.close()
+            return True
+        except Exception as e:
+            print(f"Error descargando de Drive: {e}")
+            return False
 
-        results = self.service.files().list(pageSize=10, fields="nextPageToken, files(id, name)").execute()
-        items = results.get('files', [])
-        return [item['name'] for item in items]
+    async def get_link_by_name(self, file_name):
+        service = self._get_service()
+        query = f"name = '{file_name}' and trashed = false"
+        res = service.files().list(q=query, fields="files(webViewLink)").execute()
+        files = res.get('files', [])
+        return files[0].get('webViewLink') if files else None
     
     async def delete_file(self, file_name):
         """Busca un archivo por nombre y lo elimina de Google Drive"""

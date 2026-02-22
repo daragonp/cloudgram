@@ -1,110 +1,121 @@
 import asyncio
 import os
 import json
-from src.database.db_handler_local import DatabaseHandler
+from src.database.db_handler import DatabaseHandler  # <--- CORREGIDO
 from src.utils.ai_handler import AIHandler
+from src.services.dropbox_service import DropboxService
+from src.services.google_drive_service import GoogleDriveService
 from telegram import Bot
 from dotenv import load_dotenv
-import time
 
 load_dotenv()
 db = DatabaseHandler()
-bot = Bot(token=os.getenv("TELEGRAM_BOT_TOKEN"))
 
-def limpiar_y_recortar_texto(texto, max_chars=20000):
-    """Evita el error de tokens recortando el texto si es muy largo."""
-    if not texto:
-        return ""
-    if len(texto) > max_chars:
-        print(f"✂️ Texto demasiado largo ({len(texto)} chars). Recortando a {max_chars}...")
-        return texto[:max_chars]
-    return texto
-
-# Reemplaza estas funciones en tu indexador.py
+# Inicialización de servicios
+dropbox_svc = DropboxService(
+    app_key=os.getenv("DROPBOX_APP_KEY"),
+    app_secret=os.getenv("DROPBOX_APP_SECRET"),
+    refresh_token=os.getenv("DROPBOX_REFRESH_TOKEN")
+)
+drive_svc = GoogleDriveService()
 
 async def procesar_archivos_viejos():
-    print("🔍 Buscando archivos sin indexar...")
-    # Añadimos DISTINCT para evitar procesar el mismo telegram_id varias veces si está duplicado
-    with db._connect() as conn:
-        cursor = conn.execute('''
-            SELECT id, telegram_id, name 
-            FROM files 
-            WHERE embedding IS NULL OR embedding = ''
-            GROUP BY telegram_id
-        ''')
-        filas = cursor.fetchall()
+    """
+    Escanea Dropbox y Drive, compara con Supabase e indexa lo faltante.
+    """
+    print("🔍 Iniciando escaneo global de nubes...")
+    reporte = {"nuevos": 0, "errores": 0}
+    
+    # 1. Escaneo de Dropbox
+    print("📦 Escaneando Dropbox...")
+    dbx_files = await dropbox_svc.list_files("")
+    for name in dbx_files:
+        await _indexar_si_falta(name, 'dropbox', reporte)
 
-    if not filas:
-        print("✅ Todo está indexado.")
-        return "Todo estaba indexado."
-
-    for fid, tid, name in filas:
-        # ... (el resto del código de procesamiento que ya tienes funciona bien) ...
-        # Asegúrate de que el UPDATE use el 'fid' correcto para marcarlo como hecho
-        pass
-
-async def notify_admin(mensaje):
-    """Versión robusta para evitar el error 'Event loop is closed'"""
+    # 2. Escaneo de Google Drive
+    print("📂 Escaneando Google Drive...")
     try:
-        # Creamos una instancia fresca para la notificación
-        from telegram import Bot
-        import os
-        token = os.getenv("TELEGRAM_BOT_TOKEN")
-        admin_id = os.getenv("ADMIN_ID")
-        if admin_id and token:
-            local_bot = Bot(token=token)
-            async with local_bot:
-                await local_bot.send_message(chat_id=admin_id, text=f"🔔 *Indexador:* {mensaje}", parse_mode='Markdown')
+        drive_files = await drive_svc.list_files(limit=50)
+        for name in drive_files:
+            await _indexar_si_falta(name, 'drive', reporte)
     except Exception as e:
-        print(f"No se pudo enviar notificación: {e}")
+        print(f"❌ Error en Drive Indexer: {e}")
 
-# Cambiamos la forma en que se ejecuta al final del archivo:
-if __name__ == "__main__":
-    # Ejecutamos todo en un solo bloque para mantener el loop abierto
-    async def main():
-        res = await procesar_archivos_viejos()
-        await notify_admin(f"Proceso finalizado. {res}")
-    
-    asyncio.run(main())
-    
-async def notify_admin(mensaje):
-    admin_id = os.getenv("ADMIN_ID")
-    if admin_id:
-        try:
-            await bot.send_message(chat_id=admin_id, text=f"🔔 *Indexador:* {mensaje}", parse_mode='Markdown')
-        except Exception as e:
-            print(f"No se pudo enviar notificación: {e}")
+    return f"Procesados: {reporte['nuevos']} nuevos archivos. Errores: {reporte['errores']}."
 
-# --- FUNCIONES PARA LA INTERFAZ WEB ---
+async def _indexar_si_falta(name, servicio, reporte):
+    """Lógica interna para procesar un archivo individual si no está en DB"""
+    # Verificamos si ya existe en Supabase
+    existente = db.get_file_by_name_and_service(name, servicio)
+    
+    # Si existe y ya tiene embedding, saltamos
+    if existente and existente.get('embedding'):
+        return
+
+    print(f"⚙️ Procesando: {name} ({servicio})...")
+    local_path = os.path.join("descargas", name)
+    
+    try:
+        # 1. Descarga según el servicio
+        success = False
+        url = None
+        if servicio == 'dropbox':
+            success = await dropbox_svc.download_file(f"/{name}", local_path)
+            url = await dropbox_svc.get_link(f"/{name}")
+        elif servicio == 'drive':
+            success = await drive_svc.download_file_by_name(name, local_path)
+            url = await drive_svc.get_link_by_name(name)
+
+        if not success or not os.path.exists(local_path):
+            raise Exception("No se pudo descargar el archivo.")
+
+        # 2. Análisis IA
+        texto = await AIHandler.extract_text(local_path)
+        # Recortamos texto para evitar errores de tokens (usando tu función)
+        texto_limpio = limpiar_y_recortar_texto(texto)
+        vector = await AIHandler.get_embedding(texto_limpio) if texto_limpio else None
+
+        # 3. Registro en Supabase
+        # Si ya existe pero no tenía embedding, lo actualizamos, si no, creamos.
+        db.register_file(
+            telegram_id="INDEXER_SYNC",
+            name=name,
+            f_type=name.split('.')[-1] if '.' in name else 'file',
+            cloud_url=url or "link_no_disponible",
+            service=servicio,
+            content_text=texto_limpio,
+            embedding=vector
+        )
+        
+        reporte['nuevos'] += 1
+        print(f"✅ Indexado: {name}")
+
+    except Exception as e:
+        print(f"❌ Error indexando {name}: {e}")
+        reporte['errores'] += 1
+    finally:
+        if os.path.exists(local_path):
+            os.remove(local_path)
+
+def limpiar_y_recortar_texto(texto, max_chars=15000):
+    if not texto: return ""
+    return texto[:max_chars] if len(texto) > max_chars else texto
+
+# --- COMPATIBILIDAD CON WEB_ADMIN (FLASK) ---
 
 def ejecutar_indexacion_completa():
-    """Llamada por el botón del Dashboard"""
-    print("Iniciando indexación desde la Web...")
+    """Llamada por el botón del Dashboard. Usa un loop nuevo para no chocar con Flask."""
     try:
-        # Ejecutamos el loop asíncrono desde el entorno síncrono de Flask
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         resultado = loop.run_until_complete(procesar_archivos_viejos())
         loop.close()
-        return f"Éxito: {resultado}"
+        return resultado
     except Exception as e:
         return f"Error: {str(e)}"
 
 def ejecutar_indexacion_paso_a_paso():
-    """Llamada por la barra de progreso de la Web"""
-    with db._connect() as conn:
-        cursor = conn.execute('SELECT COUNT(*) FROM files WHERE embedding IS NULL')
-        total = cursor.fetchone()[0]
-
-    if total == 0:
-        yield f"data: 100\n\n"
-        return
-
-    # Simulación de pasos para la barra (mejorable conectándolo al loop real)
-    yield f"data: 10\n\n"
-    ejecutar_indexacion_completa()
+    """Generador para la barra de progreso"""
+    yield "data: 20\n\n"
+    res = ejecutar_indexacion_completa()
     yield f"data: 100\n\n"
-
-if __name__ == "__main__":
-    asyncio.run(procesar_archivos_viejos())
-    asyncio.run(notify_admin("✅ Proceso de indexación masiva finalizado. Todos los archivos son ahora buscables con IA."))

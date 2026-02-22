@@ -2,6 +2,7 @@ from flask import Flask, render_template, redirect, url_for, request, flash, Res
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 import os
+import threading
 
 # Importaciones de tu proyecto
 # from src.database.db_handler_local import DatabaseHandler
@@ -161,6 +162,15 @@ def perfil():
     return render_template('profile.html', user=user_data)
 
 # --- MANTENIMIENTO ---
+
+@app.route('/run-indexer', methods=['POST'])
+@login_required
+def run_indexer():
+    # Lanzar en segundo plano para no bloquear la web
+    thread = threading.Thread(target=asyncio.run, args=(ejecutar_indexacion_completa(),))
+    thread.start()
+    flash("🚀 Indexación iniciada en segundo plano. Los resultados aparecerán en breve.", "info")
+    return redirect(url_for('dashboard'))
 
 @app.route('/reset-errors', methods=['POST'])
 @login_required

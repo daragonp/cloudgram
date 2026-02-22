@@ -49,7 +49,28 @@ class DropboxService(CloudService):
         except Exception as e:
             print(f"❌ Error borrando en Dropbox: {e}")
             return False
-        
+
+    async def download_file(self, cloud_path, local_path):
+        if not self.dbx: return False
+        try:
+            # cloud_path debe iniciar con "/" (ej: /foto.jpg)
+            self.dbx.files_download_to_file(local_path, cloud_path)
+            return True
+        except Exception as e:
+            print(f"Error descargando de Dropbox: {e}")
+            return False
+
+    async def get_link(self, cloud_path):
+        """Recupera un link existente o crea uno nuevo"""
+        try:
+            res = self.dbx.sharing_list_shared_links(path=cloud_path, direct_only=True)
+            if res.links:
+                return res.links[0].url.replace('?dl=0', '?dl=1')
+            link = self.dbx.sharing_create_shared_link_with_settings(cloud_path)
+            return link.url.replace('?dl=0', '?dl=1')
+        except:
+            return None
+            
     async def list_files(self, path=""):
         if not self.dbx: return []
         try:
