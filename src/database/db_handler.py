@@ -4,29 +4,40 @@ import json
 import numpy as np
 from datetime import datetime
 import os
+import sqlite3 
+
 
 class DatabaseHandler:
 
     def __init__(self):
-        # 1. Buscamos la variable de Railway
+        # 1. Intentar capturar la URL de Railway
         self.db_url = os.getenv("DATABASE_URL")
         
+        print(f"--- DIAGNÓSTICO DE DB ---")
         if not self.db_url:
-            # Si esto sale en el log, es que Railway NO está leyendo tu variable
-            print("❌ ERROR: No se encontró DATABASE_URL. Usando SQLite de emergencia...")
-            self.db_url = "sqlite:///cloudgram.db" 
+            print("❌ ERROR: La variable DATABASE_URL está VACÍA en Railway.")
+            # Si está vacía, aquí es donde creaba el .db. Vamos a forzar el error mejor.
+            self.db_url = "sqlite:///error_no_variable.db" 
         else:
-            print(f"✅ URL de Base de Datos detectada (Inicia con: {self.db_url[:15]}...)")
+            # Aseguramos el prefijo correcto para SQLAlchemy/Psycopg2
+            if self.db_url.startswith("postgres://"):
+                self.db_url = self.db_url.replace("postgres://", "postgresql://", 1)
+            print(f"✅ Variable detectada: {self.db_url[:15]}...")
         
         self._setup_initial_db()
 
     def _connect(self):
-        # Si es Supabase (PostgreSQL)
-        if self.db_url.startswith("postgres"):
-            return psycopg2.connect(self.db_url)
-        # Si falló y es SQLite
-        import sqlite3
-        return sqlite3.connect("cloudgram.db")
+        # Si la URL es de Postgres, usamos psycopg2
+        if "postgresql" in self.db_url:
+            try:
+                return psycopg2.connect(self.db_url)
+            except Exception as e:
+                print(f"❌ ERROR DE CONEXIÓN A SUPABASE: {e}")
+                raise e
+        else:
+            # Si por alguna razón sigue intentando SQLite
+            print("⚠️ CUIDADO: Usando SQLite local.")
+            return sqlite3.connect("cloudgram.db")
 
     def _setup_initial_db(self):
         """Crea las tablas necesarias si no existen."""
