@@ -3,7 +3,7 @@ import os
 import asyncio
 import ssl
 import certifi
-import random  # Movido aquí arriba
+import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
