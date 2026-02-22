@@ -1,7 +1,7 @@
 import asyncio
 import os
 import json
-from src.database.db_handler import DatabaseHandler
+from src.database.db_handler_local import DatabaseHandler
 from src.utils.ai_handler import AIHandler
 from telegram import Bot
 from dotenv import load_dotenv

@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import os
 
 # Importaciones de tu proyecto
-from src.database.db_handler import DatabaseHandler
+from src.database.db_handler_local import DatabaseHandler
 from indexador import ejecutar_indexacion_completa, ejecutar_indexacion_paso_a_paso
 
 db = DatabaseHandler()

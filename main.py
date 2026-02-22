@@ -34,7 +34,7 @@ from src.services.dropbox_service import DropboxService
 from src.services.google_drive_service import GoogleDriveService
 from src.services.onedrive_service import OneDriveService
 from src.utils.ai_handler import AIHandler
-from src.database.db_handler import DatabaseHandler
+from src.database.db_handler_local import DatabaseHandler
 
 # 2. INICIALIZACIÓN DE SERVICIOS Y BD
 db = DatabaseHandler()

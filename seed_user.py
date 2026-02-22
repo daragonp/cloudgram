@@ -1,5 +1,5 @@
 from werkzeug.security import generate_password_hash
-from src.database.db_handler import DatabaseHandler
+from src.database.db_handler_local import DatabaseHandler
 import os
 
 def seed():
