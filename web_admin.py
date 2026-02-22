@@ -4,7 +4,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import os
 
 # Importaciones de tu proyecto
-from src.database.db_handler_local import DatabaseHandler
+# from src.database.db_handler_local import DatabaseHandler
+from src.database.db_handler import DatabaseHandler
 from indexador import ejecutar_indexacion_completa, ejecutar_indexacion_paso_a_paso
 
 db = DatabaseHandler()
@@ -74,22 +75,28 @@ def dashboard():
     try:
         recent_files = db.get_last_files(20)
         
+        # Conexión compatible con Supabase
         with db._connect() as conn:
-            # Archivos procesados con éxito
-            count_ia = conn.execute("""
-                SELECT COUNT(*) FROM files 
-                WHERE embedding IS NOT NULL 
-                AND embedding NOT IN ('', '[]', 'error_limit')
-            """).fetchone()[0]
-            
-            # Conteo de imágenes
-            count_fotos = conn.execute("""
-                SELECT COUNT(*) FROM files 
-                WHERE name LIKE '%.jpg' OR name LIKE '%.png' OR name LIKE '%.jpeg' OR name LIKE '%.webp'
-            """).fetchone()[0]
-            
-            # Total absoluto
-            total_db = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+            with conn.cursor() as cur:
+                # 1. Archivos procesados con éxito
+                cur.execute("""
+                    SELECT COUNT(*) FROM files 
+                    WHERE embedding IS NOT NULL 
+                    AND embedding NOT IN ('', '[]', 'error_limit')
+                """)
+                count_ia = cur.fetchone()[0]
+                
+                # 2. Conteo de imágenes (ILIKE es mejor para Postgres)
+                cur.execute("""
+                    SELECT COUNT(*) FROM files 
+                    WHERE name ILIKE '%.jpg' OR name ILIKE '%.png' 
+                    OR name ILIKE '%.jpeg' OR name ILIKE '%.webp'
+                """)
+                count_fotos = cur.fetchone()[0]
+                
+                # 3. Total absoluto
+                cur.execute("SELECT COUNT(*) FROM files")
+                total_db = cur.fetchone()[0]
         
         return render_template('dashboard.html', 
                              files=recent_files, 
@@ -97,9 +104,9 @@ def dashboard():
                              total_fotos=count_fotos,
                              total_total=total_db)
     except Exception as e:
-        print(f"Error Dashboard: {e}")
+        print(f"❌ Error Dashboard: {e}")
         return render_template('dashboard.html', files=[], total_ia=0, total_fotos=0, total_total=0)
-
+    
 @app.route('/delete/<int:file_id>')
 @login_required
 def delete_file(file_id):

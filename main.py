@@ -34,7 +34,8 @@ from src.services.dropbox_service import DropboxService
 from src.services.google_drive_service import GoogleDriveService
 from src.services.onedrive_service import OneDriveService
 from src.utils.ai_handler import AIHandler
-from src.database.db_handler_local import DatabaseHandler
+#from src.database.db_handler_local import DatabaseHandler
+from src.database.db_handler import DatabaseHandler
 
 # 2. INICIALIZACIÓN DE SERVICIOS Y BD
 db = DatabaseHandler()
@@ -80,12 +81,19 @@ def print_server_welcome():
             print(f"   [OK] Detectado: /{folder}")
 
     # 3. Verificación de Base de Datos
-    db_file = "data/cloudgram.db"
+    """ db_file = "data/cloudgram.db"
     if os.path.exists(db_file):
         size_kb = os.path.getsize(db_file) / 1024
         print(f"🗄️  Base de Datos:  DETECTADA ({size_kb:.2f} KB)")
     else:
         print("🗄️  Base de Datos:  NUEVA (se inicializará al primer registro)")
+ """
+    # Sustituye esa parte en main.py por esto:
+    db_url = os.getenv("DATABASE_URL")
+    if db_url and "supabase" in db_url.lower():
+        print(f"🗄️  Base de Datos:  CONECTADA A SUPABASE (Nube)")
+    else:
+        print(f"🗄️  Base de Datos:  LOCAL (SQLite)")
 
     # 4. Verificación de Variables Críticas (.env)
     print("-" * 60)
