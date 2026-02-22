@@ -8,14 +8,25 @@ import os
 class DatabaseHandler:
 
     def __init__(self):
-        # En Railway, DATABASE_URL debe estar en las variables de entorno
-        # Ejemplo: postgresql://postgres:password@db.supabase.co:5432/postgres
+        # 1. Buscamos la variable de Railway
         self.db_url = os.getenv("DATABASE_URL")
+        
+        if not self.db_url:
+            # Si esto sale en el log, es que Railway NO está leyendo tu variable
+            print("❌ ERROR: No se encontró DATABASE_URL. Usando SQLite de emergencia...")
+            self.db_url = "sqlite:///cloudgram.db" 
+        else:
+            print(f"✅ URL de Base de Datos detectada (Inicia con: {self.db_url[:15]}...)")
+        
         self._setup_initial_db()
 
     def _connect(self):
-        # PostgreSQL maneja los hilos de forma nativa, no requiere check_same_thread
-        return psycopg2.connect(self.db_url)
+        # Si es Supabase (PostgreSQL)
+        if self.db_url.startswith("postgres"):
+            return psycopg2.connect(self.db_url)
+        # Si falló y es SQLite
+        import sqlite3
+        return sqlite3.connect("cloudgram.db")
 
     def _setup_initial_db(self):
         """Crea las tablas necesarias si no existen."""
