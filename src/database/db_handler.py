@@ -133,3 +133,19 @@ class DatabaseHandler:
             with conn.cursor() as cur:
                 cur.execute("UPDATE files SET embedding = NULL WHERE embedding IN ('error_limit', '[]')")
             conn.commit()
+
+    def check_connection(self):
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                    print("✅ Conexión a Supabase: EXITOSA")
+                    return True
+        except Exception as e:
+            print(f"❌ Error de conexión a Supabase: {e}")
+            return False
+    def check_db_type(self):
+        if "supabase" in self.db_url.lower() or "postgre" in self.db_url.lower():
+            print("🛢️ CONECTADO A: Supabase (PostgreSQL)")
+        else:
+            print("⚠️ CONECTADO A: SQLite Local (¡Cuidado en Railway!)")

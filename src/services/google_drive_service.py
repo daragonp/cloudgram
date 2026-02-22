@@ -1,36 +1,38 @@
-# src/services/google_drive_service.py
 import os
+import json
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from .base_service import CloudService
 
-
 class GoogleDriveService(CloudService):
     def __init__(self):
         self.scopes = ['https://www.googleapis.com/auth/drive.file']
-        self.service = None # No autenticamos en el constructor
+        self.service = None
 
     def _get_service(self):
-        """Autentica solo cuando sea estrictamente necesario"""
         if self.service:
             return self.service
             
         creds = None
-        if os.path.exists('token.json'):
-            creds = Credentials.from_authorized_user_file('token.json', self.scopes)
+        # Intentamos leer el token desde la variable de entorno (Railway)
+        token_env = os.getenv('GOOGLE_DRIVE_TOKEN_JSON')
         
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', self.scopes)
-                creds = flow.run_local_server(port=0)
-            with open('token.json', 'w') as token:
-                token.write(creds.to_json())
+        if token_env:
+            # Cargamos las credenciales desde el texto de la variable
+            token_data = json.loads(token_env)
+            creds = Credentials.from_authorized_user_info(token_data, self.scopes)
         
+        # Si el token existe pero expiró, lo renovamos automáticamente
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            # Opcional: Podrías imprimir el nuevo token si quieres actualizarlo, 
+            # pero Google suele manejar la renovación en memoria bien.
+        
+        if not creds:
+            raise Exception("❌ No se encontró GOOGLE_DRIVE_TOKEN_JSON en Railway. Configúralo en Variables.")
+
         self.service = build('drive', 'v3', credentials=creds)
         return self.service
 
@@ -39,28 +41,21 @@ class GoogleDriveService(CloudService):
         file_metadata = {'name': file_name}
         media = MediaFileUpload(local_path, resumable=True)
         
-        # 1. Crear el archivo en Drive
         file = service.files().create(
             body=file_metadata, 
             media_body=media, 
             fields='id, webViewLink' 
         ).execute()
         
-        # 2. Cambiar rol a 'reader' (el valor correcto en v3)
+        # Hacer el archivo público para que el Bot/Web lo puedan mostrar
         try:
-            permission = {
-                'type': 'anyone', 
-                'role': 'reader' 
-            }
-            service.permissions().create(
-                fileId=file.get('id'), 
-                body=permission
-            ).execute()
+            permission = {'type': 'anyone', 'role': 'reader'}
+            service.permissions().create(fileId=file.get('id'), body=permission).execute()
         except Exception as e:
-            print(f"⚠️ No se pudo establecer permiso público: {e}")
+            print(f"⚠️ Error permisos públicos: {e}")
         
         return file.get('webViewLink')
-    
+
     async def list_files(self, path="/"):
 
         results = self.service.files().list(pageSize=10, fields="nextPageToken, files(id, name)").execute()
