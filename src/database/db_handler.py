@@ -180,14 +180,21 @@ class DatabaseHandler:
 
     def create_folder(self, name, service, cloud_folder_id, parent_id=None):
         with self._connect() as conn:
-            with conn.cursor() as cur:
+            # Usar RealDictCursor convierte la tupla en diccionario automáticamente
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     INSERT INTO folders (name, service, cloud_folder_id, parent_id)
                     VALUES (%s, %s, %s, %s) RETURNING id
                 """, (name, service, cloud_folder_id, parent_id))
-                return cur.fetchone()['id']
+                result = cur.fetchone()
+                return result['id'] # Ahora sí funcionará ['id']
 
-    from psycopg2.extras import RealDictCursor # Asegúrate de tener esta importación arriba
+    def get_folder_by_id(self, folder_id):
+        if not folder_id or folder_id == "root": return None
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM folders WHERE id = %s", (folder_id,))
+                return cur.fetchone()
 
     def get_folder_contents(self, parent_id=None):
         """Retorna subcarpetas y archivos usando diccionarios"""
@@ -210,7 +217,6 @@ class DatabaseHandler:
                 
                 return subfolders + files
 
-    def get_folder_by_id(self, folder_id):
         """Obtiene datos de una carpeta específica"""
         if not folder_id or folder_id == "root": return None
         with self._connect() as conn:
