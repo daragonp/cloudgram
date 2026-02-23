@@ -267,21 +267,41 @@ def generar_teclado_explorador(folder_id=None):
             
     return InlineKeyboardMarkup(keyboard)
 
-async def explorar(update, context):
+async def explorar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # folder_id puede venir de los argumentos /explorar 123
     folder_id = context.args[0] if context.args else None
+    
+    # Obtenemos contenido y carpeta actual
     items = db.get_folder_contents(folder_id)
+    
+    # Determinar el nombre de la ruta actual
+    nombre_ruta = "Raíz"
+    if folder_id:
+        folder_info = db.get_folder_by_id(folder_id)
+        nombre_ruta = folder_info['name'] if folder_info else "Desconocida"
+
     keyboard = []
     
+    # 1. Botón para subir de nivel (Volver atrás)
+    if folder_id:
+        parent = db.get_parent_folder(folder_id)
+        parent_id = parent['id'] if parent else "root"
+        keyboard.append([InlineKeyboardButton("⬆️ Volver a " + ("Raíz" if parent_id == "root" else parent['name']), callback_data=f"cd_{parent_id}")])
+
+    # 2. Listar Carpetas y Archivos
     for item in items:
         icon = "📁" if item['type'] == 'folder' else "📄"
-        # CAMBIADO: Usamos 'cd_' para carpetas para que coincida con cambiar_directorio
         callback = f"cd_{item['id']}" if item['type'] == 'folder' else f"info_{item['id']}"
         keyboard.append([InlineKeyboardButton(f"{icon} {item['name']}", callback_data=callback)])
     
-    keyboard.append([InlineKeyboardButton("➕ Crear Carpeta", callback_data=f"mkdir_{folder_id or 'root'}")])
-    
-    # Botón para crear carpeta aquí mismo
-    keyboard.append([InlineKeyboardButton("➕ Crear Carpeta", callback_data=f"mkdir_{folder_id or 'root'}")])
+    # 3. Botón de acción final
+    keyboard.append([InlineKeyboardButton("➕ Crear Carpeta aquí", callback_data=f"mkdir_{folder_id or 'root'}")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("📂 *Explorador de Archivos:*", reply_markup=reply_markup, parse_mode='Markdown')
+    
+    texto_msg = f"📂 *Explorador:* `{nombre_ruta}`\n\nSelecciona un elemento para navegar o gestionar:"
+    
+    if update.callback_query:
+        await update.callback_query.edit_message_text(texto_msg, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+    else:
+        await update.message.reply_text(texto_msg, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)

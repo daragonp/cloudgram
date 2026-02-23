@@ -36,26 +36,35 @@ class GoogleDriveService(CloudService):
         self.service = build('drive', 'v3', credentials=creds)
         return self.service
 
-    async def upload(self, local_path, file_name):
+    async def upload(self, local_path, file_name, folder_id=None):
         service = self._get_service()
+        # Si folder_id existe (es el ID de Drive), lo metemos en 'parents'
         file_metadata = {'name': file_name}
+        if folder_id:
+            file_metadata['parents'] = [folder_id]
+            
         media = MediaFileUpload(local_path, resumable=True)
         
-        file = service.files().create(
-            body=file_metadata, 
-            media_body=media, 
-            fields='id, webViewLink' 
-        ).execute()
-        
-        # Hacer el archivo público para que el Bot/Web lo puedan mostrar
         try:
-            permission = {'type': 'anyone', 'role': 'reader'}
-            service.permissions().create(fileId=file.get('id'), body=permission).execute()
+            # 1. Crear el archivo
+            file = service.files().create(
+                body=file_metadata, 
+                media_body=media, 
+                fields='id, webViewLink' 
+            ).execute()
+            
+            # 2. Hacerlo público (clave para que funcione el link)
+            try:
+                permission = {'type': 'anyone', 'role': 'reader'}
+                service.permissions().create(fileId=file.get('id'), body=permission).execute()
+            except Exception as e:
+                print(f"⚠️ Error permisos públicos Drive: {e}")
+            
+            return file.get('webViewLink')
         except Exception as e:
-            print(f"⚠️ Error permisos públicos: {e}")
+            print(f"❌ Error crítico subida Drive: {e}")
+            return None
         
-        return file.get('webViewLink')
-
     async def list_files(self, limit=10000):
             service = self._get_service()
             # Aumentamos el pageSize para no dejar archivos fuera

@@ -566,9 +566,11 @@ async def post_init(application):
     await application.bot.set_my_commands([
         BotCommand("start", "Reactivar el bot"),
         BotCommand("listar", "Ver últimos archivos"),
+        BotCommand("explorar", "Ver carpetas y archivos"),
         BotCommand("buscar", "Búsqueda por nombre"),
         BotCommand("buscar_ia", "Búsqueda inteligente"),
         BotCommand("eliminar", "Borrar registros")
+
     ])
 
 # 7. CARPETAS Y ARCHIVOS (EXPLORADOR)
@@ -611,8 +613,9 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("buscar", search_command))
     app.add_handler(CommandHandler("buscar_ia", search_ia_command))
     app.add_handler(CommandHandler("eliminar", delete_command))
+    app.add_handler(CommandHandler("explorar", explorar))
     app.add_handler(CommandHandler(["cancelar", "salir", "stop"], cancelar_handler))
-    
+        
     # Manejo de archivos y multimedia
     app.add_handler(MessageHandler(
         (filters.Document.ALL | filters.PHOTO | filters.VIDEO | 
