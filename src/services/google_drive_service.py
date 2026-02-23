@@ -36,31 +36,6 @@ class GoogleDriveService(CloudService):
         self.service = build('drive', 'v3', credentials=creds)
         return self.service
 
-    async def upload(self, local_path, file_name):
-        service = self._get_service()
-        try:
-            media = MediaFileUpload(local_path, resumable=True)
-            file_metadata = {'name': file_name}
-            
-            file = service.files().create(
-                body=file_metadata, 
-                media_body=media, 
-                fields='id, webViewLink'
-            ).execute()
-
-            # Permisos públicos
-            try:
-                service.permissions().create(
-                    fileId=file.get('id'), 
-                    body={'type': 'anyone', 'role': 'reader'}
-                ).execute()
-            except: pass
-
-            return file.get('webViewLink')
-        except Exception as e:
-            print(f"❌ Error Drive: {e}")
-            return None
-     
     async def list_files(self, limit=10000):
             service = self._get_service()
             # Aumentamos el pageSize para no dejar archivos fuera
@@ -127,13 +102,51 @@ class GoogleDriveService(CloudService):
             print(f"❌ Error borrando en Google Drive: {e}")
             return False
         
+    async def upload(self, local_path, file_name, folder_id=None):
+            service = self._get_service()
+            try:
+                # Si folder_id es "root" o vacío, lo tratamos como None
+                p_id = folder_id if (folder_id and folder_id != "root") else None
+                
+                file_metadata = {'name': file_name}
+                if p_id:
+                    file_metadata['parents'] = [p_id]
+                    
+                media = MediaFileUpload(local_path, resumable=True)
+                file = service.files().create(
+                    body=file_metadata, 
+                    media_body=media, 
+                    fields='id, webViewLink'
+                ).execute()
+
+                # Permisos públicos para que el link funcione
+                try:
+                    service.permissions().create(
+                        fileId=file.get('id'),
+                        body={'type': 'anyone', 'role': 'reader'}
+                    ).execute()
+                except: pass
+
+                # RETORNO ÚNICO: Solo el string del link
+                return file.get('webViewLink')
+            except Exception as e:
+                print(f"❌ Error Drive Upload: {e}")
+                return None
+
     async def create_folder(self, folder_name, parent_id=None):
         service = self._get_service()
-        metadata = {
-            'name': folder_name,
-            'mimeType': 'application/vnd.google-apps.folder'
-        }
-        if parent_id:
-            metadata['parents'] = [parent_id]
-        folder = service.files().create(body=metadata, fields='id').execute()
-        return folder.get('id')
+        try:
+            p_id = parent_id if (parent_id and parent_id != "root") else None
+            
+            metadata = {
+                'name': folder_name,
+                'mimeType': 'application/vnd.google-apps.folder'
+            }
+            if p_id:
+                metadata['parents'] = [p_id]
+                
+            folder = service.files().create(body=metadata, fields='id').execute()
+            return folder.get('id')
+        except Exception as e:
+            print(f"❌ Error Drive mkdir: {e}")
+            return None

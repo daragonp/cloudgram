@@ -22,30 +22,7 @@ class DropboxService(CloudService):
             print("✅ DropboxService: Conexión verificada con éxito.")
         except Exception as e:
             print(f"❌ Error de autenticación en Dropbox: {e}")
-            self.dbx = None
-
-    async def upload(self, local_path, file_name, folder_path="General"):
-        if not self.dbx: return None
-        # Aseguramos que el path empiece por / y no tenga dobles //
-        cloud_path = f"/{folder_path}/{file_name}".replace("//", "/")
-        
-        try:
-            with open(local_path, "rb") as f:
-                self.dbx.files_upload(f.read(), cloud_path, mode=dropbox.files.WriteMode('overwrite'))
-            
-            try:
-                # Intentar crear link nuevo
-                link_metadata = self.dbx.sharing_create_shared_link_with_settings(cloud_path)
-                return link_metadata.url.replace('?dl=0', '?dl=1')
-            except dropbox.exceptions.ApiError as e:
-                # Si el link ya existe (Error shared_link_already_exists)
-                if e.error.is_shared_link_already_exists():
-                    links = self.dbx.sharing_list_shared_links(path=cloud_path, direct_only=True).links
-                    return links[0].url.replace('?dl=0', '?dl=1')
-                raise e
-        except Exception as e:
-            print(f"❌ Error crítico Dropbox: {e}")
-            return None    
+            self.dbx = None 
     
     async def delete_file(self, path):
         if not self.dbx: return False
@@ -87,13 +64,42 @@ class DropboxService(CloudService):
         except Exception as e:
             print(f"Error listando Dropbox: {e}")
             return []
+        
     
     async def create_folder(self, folder_name, parent_path=""):
         if not self.dbx: return None
-        full_path = f"{parent_path}/{folder_name}".replace("//", "/")
+        # Normalizamos el path: evitar "//" y asegurar que empiece con "/"
+        path = f"/{parent_path}/{folder_name}".replace("//", "/")
         try:
-            res = self.dbx.files_create_folder_v2(full_path)
+            res = self.dbx.files_create_folder_v2(path)
             return res.metadata.path_display
+        except dropbox.exceptions.ApiError as e:
+            # Si el error es por conflicto (ya existe), devolvemos el path sin morir
+            if e.error.is_path() and e.error.get_path().is_conflict():
+                return path
+            print(f"❌ Error Dropbox mkdir: {e}")
+            return None
+
+    async def upload(self, local_path, file_name, folder="General"):
+        if not self.dbx: return None
+        # Aseguramos un path limpio
+        cloud_path = f"/{folder}/{file_name}".replace("//", "/")
+        try:
+            with open(local_path, "rb") as f:
+                self.dbx.files_upload(f.read(), cloud_path, mode=WriteMode('overwrite'))
+            
+            # Intentar obtener o crear link
+            try:
+                link_metadata = self.dbx.sharing_create_shared_link_with_settings(cloud_path)
+                url = link_metadata.url
+            except dropbox.exceptions.ApiError as e:
+                if "shared_link_already_exists" in str(e):
+                    links = self.dbx.sharing_list_shared_links(path=cloud_path, direct_only=True).links
+                    url = links[0].url if links else None
+                else: raise e
+            
+            # IMPORTANTE: Retornar solo el string transformado para descarga directa
+            return url.replace('?dl=0', '?dl=1') if url else None
         except Exception as e:
-            print(f"Error en Dropbox mkdir: {e}")
-            raise e
+            print(f"❌ Error Dropbox Upload: {e}")
+            return None

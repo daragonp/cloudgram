@@ -178,15 +178,16 @@ async def show_cloud_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ed
             print(f"Error menú: {e}")
 
 async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from main import db, dropbox_svc, drive_svc, openai_client
+    from main import db, dropbox_svc, drive_svc
     from src.utils.ai_handler import AIHandler
-    import time
     from datetime import datetime
+    import os
 
     user_data = context.user_data
-    file_id, file_name, file_ext = None, "archivo_desconocido", "bin"
+    file_id, file_name = None, None
+    is_location = False
     
-    # 1. Identificación robusta con Timestamp único (Evita archivos duplicados)
+    # 1. Identificación robusta (Timestamp con microsegundos para evitar duplicados)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     
     if update.message.document:
@@ -204,54 +205,57 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif update.message.video:
         file_id = update.message.video.file_id
         file_name = f"video_{ts}.mp4"
-    elif update.message.location:
-        # Caso especial para ubicaciones
+    elif update.message.video_note: # <-- CORREGIDO: Recuperamos Notas de Video
+        file_id = update.message.video_note.file_id
+        file_name = f"video_nota_{ts}.mp4"
+    elif update.message.location: # <-- CORREGIDO: Manejo de Ubicaciones
+        is_location = True
         loc = update.message.location
-        await update.message.reply_text(f"📍 Ubicación recibida: `{loc.latitude}, {loc.longitude}`", parse_mode=ParseMode.MARKDOWN)
-        return # Las ubicaciones no se suben como archivos usualmente
+        file_name = f"ubicacion_{ts}.txt"
+        local_path = os.path.join("descargas", file_name)
+        with open(local_path, "w", encoding="utf-8") as f:
+            f.write(f"📍 Ubicación Google Maps: https://www.google.com/maps?q={loc.latitude},{loc.longitude}")
 
-    if not file_id:
+    if not file_id and not is_location:
         await update.message.reply_text("❌ No pude procesar este tipo de archivo.")
         return
 
     # 2. ¿Hay una sesión de carpeta activa?
     folder_id = user_data.get('current_folder_id')
-    cloud_parent_path = user_data.get('current_cloud_id') # ID de Drive o Path de Dropbox
+    # Path de Dropbox o ID de Google Drive
+    cloud_parent = user_data.get('current_cloud_id') 
 
     if folder_id:
         msg = await update.message.reply_text(f"📥 Procesando y subiendo a *{user_data.get('current_path_name')}*...", parse_mode=ParseMode.MARKDOWN)
         
         try:
-            # Descarga local
-            tg_file = await context.bot.get_file(file_id)
             local_path = os.path.join("descargas", file_name)
-            await tg_file.download_to_drive(local_path)
-
-            # --- IA: EXTRAER SIGNIFICADO ---
-            # Esto evita el error de Whisper y extrae texto para búsquedas
-            texto_extraido = await AIHandler.extract_text(local_path)
-            # LIMPIEZA CRÍTICA: Eliminar caracteres NUL para Postgres
-            texto_limpio = texto_extraido.replace('\x00', '') if texto_extraido else ""
             
-            # Generar Vector (Embedding)
-            vector = await AIHandler.get_embedding(texto_limpio) if texto_limpio else None
+            # Descarga si no es ubicación (la ubicación ya la creamos arriba)
+            if not is_location:
+                tg_file = await context.bot.get_file(file_id)
+                await tg_file.download_to_drive(local_path)
+
+            # --- IA: EXTRAER TEXTO / TRANSCRIPCIÓN ---
+            texto_extraido = await AIHandler.extract_text(local_path)
+            vector = await AIHandler.get_embedding(texto_extraido) if texto_extraido else None
 
             # --- SUBIDA A NUBE ---
-            # Nota: Asegúrate que tus funciones upload devuelvan un STRING (la URL)
-            cloud_url = await dropbox_svc.upload(local_path, file_name, folder=cloud_parent_path or "General")
+            # Intentamos Dropbox por defecto en modo carpeta activa
+            cloud_url = await dropbox_svc.upload(local_path, file_name, folder=cloud_parent or "General")
 
             if cloud_url:
-                # Si la función devolvió una tupla por error, tomamos el primer elemento
+                # Si por error las funciones de servicio devolvieron una tupla, extraemos el string
                 if isinstance(cloud_url, tuple): cloud_url = cloud_url[0]
 
-                # REGISTRO EN DB (Usando los nuevos métodos que ya corregiste)
+                # Registro en Base de Datos
                 db.register_file(
                     telegram_id=update.effective_user.id,
                     name=file_name,
                     f_type=file_name.split('.')[-1],
                     cloud_url=cloud_url,
                     service='dropbox',
-                    content_text=texto_limpio,
+                    content_text=texto_extraido,
                     embedding=vector,
                     folder_id=folder_id
                 )
@@ -260,20 +264,21 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"✅ *Guardado con éxito*\n\n"
                     f"📄 `{file_name}`\n"
                     f"📂 Carpeta: `{user_data.get('current_path_name')}`\n"
-                    f"👁️ IA: {texto_limpio[:100]}...", 
+                    f"🔗 [Abrir archivo]({cloud_url})", 
                     parse_mode=ParseMode.MARKDOWN
                 )
             else:
-                await msg.edit_text("❌ La nube rechazó el archivo.")
+                await msg.edit_text("❌ Error: La nube no devolvió un enlace válido.")
             
+            # Limpieza
             if os.path.exists(local_path): os.remove(local_path)
             
         except Exception as e:
-            print(f"Error handle_any_file: {e}")
-            await msg.edit_text(f"❌ Error: {str(e)}")
+            print(f"Error en handle_any_file: {e}")
+            await msg.edit_text(f"❌ Error crítico: {str(e)}")
     
     else:
-        # MODO MANUAL: No hay carpeta, cola normal
+        # MODO MANUAL: No hay carpeta, mostramos el menú de selección de nubes
         if 'file_queue' not in user_data: user_data['file_queue'] = []
         user_data['file_queue'].append({'id': file_id, 'name': file_name, 'type': 'Archivo'})
         
@@ -284,7 +289,7 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_cloud_menu(update, context)
         
         user_data['menu_timer'] = asyncio.create_task(_wait())
-        
+
 def generar_teclado_explorador(folder_id=None):
     """
     Genera un teclado dinámico basado en el contenido de la DB.

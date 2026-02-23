@@ -91,17 +91,26 @@ class AIHandler:
 
     @staticmethod
     async def extract_text(file_path):
-        """Extrae texto y lo limpia de caracteres prohibidos para la DB."""
+        """Extrae texto, transcribe audio/video y limpia caracteres prohibidos para la DB."""
+        if not os.path.exists(file_path):
+            print(f"❌ Error: El archivo no existe en la ruta {file_path}")
+            return ""
+
         ext = file_path.lower().split('.')[-1]
         text = ""
 
         try:
+            # --- IMÁGENES (Cámara IA con Visión) ---
             if ext in ['jpg', 'jpeg', 'png', 'webp']:
                 text = await AIHandler.analyze_image_vision(file_path)
+
+            # --- DOCUMENTOS DE TEXTO ---
             elif ext == 'pdf':
+                import fitz
                 doc = fitz.open(file_path)
                 text = " ".join([page.get_text() for page in doc])
             elif ext == 'docx':
+                import docx
                 doc = docx.Document(file_path)
                 text = "\n".join([para.text for para in doc.paragraphs])
             elif ext in ['xlsx', 'xls']:
@@ -110,11 +119,14 @@ class AIHandler:
             elif ext == 'txt':
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     text = f.read()
+
+            # --- AUDIO Y VIDEO (Whisper) ---
+            # Incluimos soporte para mp4 (notas de video)
             elif ext in ['ogg', 'mp3', 'wav', 'mp4', 'm4a']:
                 text = await AIHandler.transcribe_audio(file_path)
                 
         except Exception as e:
             print(f"❌ Error extrayendo de {ext}: {e}")
         
-        # LIMPIEZA FINAL OBLIGATORIA: Evita que el bot se rompa al insertar en Supabase
+        # LIMPIEZA FINAL OBLIGATORIA: Evita el error 'A string literal cannot contain NUL (0x00)'
         return text.replace('\x00', '').strip()
