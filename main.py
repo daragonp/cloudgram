@@ -7,8 +7,9 @@ import sys
 import numpy as np
 from datetime import datetime
 from dotenv import load_dotenv  # <-- ESTO FALTABA
+from src.handlers.message_handlers import voice_options_callback
 
-# 1. CARGA DE ENTORNO (Debe ir antes de importar servicios)
+
 load_dotenv()
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -614,6 +615,7 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("buscar_ia", search_ia_command))
     app.add_handler(CommandHandler("eliminar", delete_command))
     app.add_handler(CommandHandler("explorar", explorar))
+    app.add_handler(CallbackQueryHandler(voice_options_callback, pattern="^voice_"))
     app.add_handler(CommandHandler(["cancelar", "salir", "stop"], cancelar_handler))
         
     # Manejo de archivos y multimedia

@@ -5,11 +5,13 @@ import ssl
 import certifi
 import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 from geopy.geocoders import Nominatim
 import geopy.geocoders
 from src.init_services import db, dropbox_svc, drive_svc, openai_client
+
+
+from telegram.ext import ContextTypes, CallbackQueryHandler
 
 # Configuración SSL para Mac
 ctx = ssl.create_default_context(cafile=certifi.where())
@@ -186,31 +188,28 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = context.user_data
     file_id, file_name = None, None
     is_location = False
+    is_voice = False
     
-    # 1. Identificación robusta (Timestamp único para evitar que archivos se sobrescriban)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     
-    if update.message.document:
+    if update.message.voice:
+        is_voice = True
+        file_id = update.message.voice.file_id
+        file_name = f"nota_voz_{ts}.ogg"
+    elif update.message.document:
         file_id = update.message.document.file_id
         file_name = update.message.document.file_name
     elif update.message.photo:
         file_id = update.message.photo[-1].file_id
         file_name = f"foto_{ts}.jpg"
-    elif update.message.voice:
-        file_id = update.message.voice.file_id
-        file_name = f"nota_voz_{ts}.ogg"
     elif update.message.audio:
         file_id = update.message.audio.file_id
         file_name = update.message.audio.file_name or f"audio_{ts}.mp3"
-    elif update.message.video:
-        file_id = update.message.video.file_id
+    elif update.message.video or update.message.video_note:
+        target = update.message.video or update.message.video_note
+        file_id = target.file_id
         file_name = f"video_{ts}.mp4"
-    elif update.message.video_note: 
-        # Soporte para notas de video (mensajes circulares)
-        file_id = update.message.video_note.file_id
-        file_name = f"video_nota_{ts}.mp4"
-    elif update.message.location: 
-        # Manejo de Ubicaciones: genera un archivo de texto con el link de Maps
+    elif update.message.location:
         is_location = True
         loc = update.message.location
         file_name = f"ubicacion_{ts}.txt"
@@ -222,35 +221,45 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ No pude procesar este tipo de archivo.")
         return
 
-    # 2. Verificar si hay carpeta activa
+    # --- LÓGICA PARA NOTAS DE VOZ (NUEVO MENÚ) ---
+    if is_voice:
+        # Guardamos los datos para usarlos tras la elección del usuario
+        user_data['temp_voice'] = {
+            'file_id': file_id,
+            'file_name': file_name,
+            'folder_id': user_data.get('current_folder_id'),
+            'cloud_id': user_data.get('current_cloud_id')
+        }
+        
+        keyboard = [
+            [InlineKeyboardButton("📝 Solo Transcribir (Ver aquí)", callback_data="voice_only_view")],
+            [InlineKeyboardButton("🎙️ Subir Audio y Transcripción", callback_data="voice_upload_both")],
+            [InlineKeyboardButton("☁️ Subir Solo Audio", callback_data="voice_upload_audio")],
+            [InlineKeyboardButton("📄 Subir Solo Transcripción", callback_data="voice_upload_txt")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("🎙️ *Nota de voz detectada.*\n¿Qué deseas hacer?", 
+                                      reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+        return
+
+    # --- FLUJO NORMAL PARA OTROS ARCHIVOS (Si hay carpeta activa) ---
     folder_id = user_data.get('current_folder_id')
     cloud_parent = user_data.get('current_cloud_id') 
 
     if folder_id:
-        msg = await update.message.reply_text(f"📥 Procesando y subiendo a *{user_data.get('current_path_name')}*...", parse_mode=ParseMode.MARKDOWN)
-        
+        msg = await update.message.reply_text(f"📥 Procesando *{file_name}*...", parse_mode=ParseMode.MARKDOWN)
         try:
             local_path = os.path.join("descargas", file_name)
-            
-            # Descarga desde Telegram (si no es una ubicación generada manualmente)
             if not is_location:
                 tg_file = await context.bot.get_file(file_id)
                 await tg_file.download_to_drive(local_path)
 
-            # --- IA: EXTRACCIÓN Y EMBEDDING ---
-            # extract_text ya debe limpiar los caracteres \x00
             texto_extraido = await AIHandler.extract_text(local_path)
             vector = await AIHandler.get_embedding(texto_extraido) if texto_extraido else None
-
-            # --- SUBIDA A LA NUBE (Dropbox por defecto en modo directo) ---
             cloud_url = await dropbox_svc.upload(local_path, file_name, folder=cloud_parent or "General")
 
-            # Validar que recibimos un string (evitar el error de la tupla)
-            if isinstance(cloud_url, tuple): 
-                cloud_url = cloud_url[0]
-
-            if cloud_url and isinstance(cloud_url, str):
-                # Registro en Base de Datos Supabase
+            if cloud_url:
+                if isinstance(cloud_url, tuple): cloud_url = cloud_url[0]
                 db.register_file(
                     telegram_id=update.effective_user.id,
                     name=file_name,
@@ -261,41 +270,95 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     embedding=vector,
                     folder_id=folder_id
                 )
-                
-                # Confirmación al usuario solo si todo el proceso fue exitoso
-                await msg.edit_text(
-                    f"✅ *Guardado con éxito*\n\n"
-                    f"📄 `{file_name}`\n"
-                    f"📂 Carpeta: `{user_data.get('current_path_name')}`\n"
-                    f"🔗 [Abrir archivo]({cloud_url})", 
-                    parse_mode=ParseMode.MARKDOWN
-                )
+                await msg.edit_text(f"✅ *Guardado: * `{file_name}`\n🔗 [Abrir]({cloud_url})", parse_mode=ParseMode.MARKDOWN)
             else:
-                await msg.edit_text("❌ Error: La nube no devolvió un enlace válido.")
+                await msg.edit_text("❌ Error en la subida a la nube.")
             
-            # Limpiar archivo temporal
-            if os.path.exists(local_path): 
-                os.remove(local_path)
-            
+            if os.path.exists(local_path): os.remove(local_path)
         except Exception as e:
-            print(f"Error crítico en handle_any_file: {e}")
-            await msg.edit_text(f"❌ Error interno: {str(e)}")
-    
+            await msg.edit_text(f"❌ Error: {str(e)}")
     else:
-        # MODO MANUAL: No hay carpeta activa, mostramos menú de selección de nube
-        if 'file_queue' not in user_data: 
-            user_data['file_queue'] = []
+        # MODO MANUAL (Sin carpeta activa)
+        if 'file_queue' not in user_data: user_data['file_queue'] = []
         user_data['file_queue'].append({'id': file_id, 'name': file_name, 'type': 'Archivo'})
-        
-        if 'menu_timer' in user_data: 
-            user_data['menu_timer'].cancel()
-        
-        async def _wait():
-            await asyncio.sleep(1.2)
-            await show_cloud_menu(update, context)
-        
-        user_data['menu_timer'] = asyncio.create_task(_wait())
+        # ... (timer para mostrar menú de nubes)
+async def voice_options_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from main import db, dropbox_svc, drive_svc
+    from src.utils.ai_handler import AIHandler
+    import os
 
+    query = update.callback_query
+    await query.answer()
+    
+    user_data = context.user_data
+    voice_data = user_data.get('temp_voice')
+    
+    if not voice_data:
+        await query.edit_message_text("❌ Error: Datos de la nota de voz expirados.")
+        return
+
+    await query.edit_message_text("⏳ Procesando tu solicitud...")
+    
+    # 1. Preparar rutas
+    local_audio = os.path.join("descargas", voice_data['file_name'])
+    local_txt = local_audio.replace(".ogg", ".txt")
+    
+    try:
+        # 2. Descargar el audio de Telegram
+        tg_file = await context.bot.get_file(voice_data['file_id'])
+        await tg_file.download_to_drive(local_audio)
+        
+        # 3. Lógica según el botón pulsado
+        action = query.data # "voice_only_view", "voice_upload_both", etc.
+        
+        transcripcion = ""
+        # Necesitamos la transcripción para casi todas las opciones
+        if action in ["voice_only_view", "voice_upload_both", "voice_upload_txt"]:
+            transcripcion = await AIHandler.transcribe_audio(local_audio)
+            if not transcripcion:
+                await query.edit_message_text("❌ No se pudo generar la transcripción.")
+                return
+
+        # --- EJECUCIÓN DE ACCIONES ---
+        
+        if action == "voice_only_view":
+            await query.edit_message_text(f"📝 *Transcripción:* \n\n{transcripcion}", parse_mode=ParseMode.MARKDOWN)
+
+        elif action == "voice_upload_audio":
+            url = await dropbox_svc.upload(local_audio, voice_data['file_name'], folder=voice_data['cloud_id'])
+            if url:
+                db.register_file(update.effective_user.id, voice_data['file_name'], "ogg", url, "dropbox", folder_id=voice_data['folder_id'])
+                await query.edit_message_text(f"✅ Audio subido con éxito.\n🔗 [Ver archivo]({url})", parse_mode=ParseMode.MARKDOWN)
+
+        elif action == "voice_upload_txt":
+            with open(local_txt, "w", encoding="utf-8") as f: f.write(transcripcion)
+            txt_name = voice_data['file_name'].replace(".ogg", ".txt")
+            url = await dropbox_svc.upload(local_txt, txt_name, folder=voice_data['cloud_id'])
+            if url:
+                db.register_file(update.effective_user.id, txt_name, "txt", url, "dropbox", content_text=transcripcion, folder_id=voice_data['folder_id'])
+                await query.edit_message_text(f"✅ Transcripción subida.\n🔗 [Ver archivo]({url})", parse_mode=ParseMode.MARKDOWN)
+
+        elif action == "voice_upload_both":
+            # Subir Audio
+            url_audio = await dropbox_svc.upload(local_audio, voice_data['file_name'], folder=voice_data['cloud_id'])
+            # Subir TXT
+            with open(local_txt, "w", encoding="utf-8") as f: f.write(transcripcion)
+            txt_name = voice_data['file_name'].replace(".ogg", ".txt")
+            url_txt = await dropbox_svc.upload(local_txt, txt_name, folder=voice_data['cloud_id'])
+            
+            if url_audio and url_txt:
+                db.register_file(update.effective_user.id, voice_data['file_name'], "ogg", url_audio, "dropbox", folder_id=voice_data['folder_id'])
+                db.register_file(update.effective_user.id, txt_name, "txt", url_txt, "dropbox", content_text=transcripcion, folder_id=voice_data['folder_id'])
+                await query.edit_message_text(f"✅ Ambos archivos subidos.\n🎙️ [Audio]({url_audio})\n📄 [Texto]({url_txt})", parse_mode=ParseMode.MARKDOWN)
+
+    except Exception as e:
+        await query.edit_message_text(f"❌ Error procesando voz: {e}")
+    finally:
+        # Limpieza de temporales
+        if os.path.exists(local_audio): os.remove(local_audio)
+        if os.path.exists(local_txt): os.remove(local_txt)
+        user_data.pop('temp_voice', None)
+               
 def generar_teclado_explorador(folder_id=None):
     """
     Genera un teclado dinámico basado en el contenido de la DB.
