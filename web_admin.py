@@ -147,6 +147,11 @@ def reset_errors():
     return redirect(url_for('dashboard'))
 
 # --- INDEXADOR IA ---
+import asyncio
+import threading
+from flask import Response, stream_with_context
+
+# ... tus otras importaciones ...
 
 @app.route('/run-indexer', methods=['POST'])
 @login_required
@@ -154,28 +159,49 @@ def run_indexer_endpoint():
     try:
         from indexador import ejecutar_indexacion_completa
         
-        def run_sync():
-            # Crear un nuevo loop para el hilo
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                # IMPORTANTE: Asegúrate de que ejecutar_indexacion_completa sea async def
-                loop.run_until_complete(ejecutar_indexacion_completa())
-            finally:
-                loop.close()
+        def start_async_logic():
+            # Esta es la forma más robusta de correr async en un hilo secundario
+            asyncio.run(ejecutar_indexacion_completa())
 
-        thread = threading.Thread(target=run_sync, daemon=True)
+        thread = threading.Thread(target=start_async_logic, daemon=True)
         thread.start()
-        return {"status": "success", "message": "Indexación iniciada"}, 200
+        return {"status": "success"}, 200
     except Exception as e:
         return {"status": "error", "message": str(e)}, 500
 
 @app.route('/progress-indexer')
 @login_required
 def progress_indexer():
-    return Response(ejecutar_indexacion_paso_a_paso(), mimetype='text/event-stream')
+    # Adaptador para que Gunicorn (sync) acepte el generador de logs (async)
+    def generate():
+        loop = asyncio.new_event_loop()
+        gen = ejecutar_indexacion_paso_a_paso()
+        try:
+            while True:
+                try:
+                    # Obtenemos el siguiente mensaje del generador
+                    msg = loop.run_until_complete(anext(gen))
+                    yield msg
+                except StopAsyncIteration:
+                    break
+        finally:
+            loop.close()
+    
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
-# --- PERFIL Y SISTEMA ---
+@app.route('/download-db')
+@login_required
+def download_db():
+    try:
+        sql_content = db.export_to_sql() # Asegúrate de tener este método en db_handler
+        return Response(
+            sql_content,
+            mimetype="application/sql",
+            headers={"Content-disposition": f"attachment; filename=backup_{datetime.now().strftime('%Y%m%d')}.sql"}
+        )
+    except Exception as e:
+        flash(f"Error: {e}", "error")
+        return redirect(url_for('dashboard'))
 
 @app.route('/perfil', methods=['GET', 'POST'])
 @login_required
@@ -198,24 +224,6 @@ def perfil():
     user_data = db.get_user_by_id(current_user.id)
     return render_template('profile.html', user=user_data)
 
-@app.route('/download-db')
-@login_required
-def download_db():
-    """Genera y descarga un archivo .sql con toda la base de datos"""
-    try:
-        sql_content = db.export_to_sql()
-        
-        return Response(
-            sql_content,
-            mimetype="application/sql",
-            headers={
-                "Content-disposition": f"attachment; filename=cloudgram_backup_{datetime.now().strftime('%Y%m%d_%H%M')}.sql"
-            }
-        )
-    except Exception as e:
-        flash(f"Error al exportar SQL: {e}", "error")
-        return redirect(url_for('dashboard'))
-    
 @app.route('/status-check')
 @login_required
 def status_check():
