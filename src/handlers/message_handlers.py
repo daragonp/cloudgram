@@ -187,7 +187,7 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_id, file_name = None, None
     is_location = False
     
-    # 1. Identificación robusta (Timestamp con microsegundos para evitar duplicados)
+    # 1. Identificación robusta (Timestamp único para evitar que archivos se sobrescriban)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     
     if update.message.document:
@@ -205,10 +205,12 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif update.message.video:
         file_id = update.message.video.file_id
         file_name = f"video_{ts}.mp4"
-    elif update.message.video_note: # <-- CORREGIDO: Recuperamos Notas de Video
+    elif update.message.video_note: 
+        # Soporte para notas de video (mensajes circulares)
         file_id = update.message.video_note.file_id
         file_name = f"video_nota_{ts}.mp4"
-    elif update.message.location: # <-- CORREGIDO: Manejo de Ubicaciones
+    elif update.message.location: 
+        # Manejo de Ubicaciones: genera un archivo de texto con el link de Maps
         is_location = True
         loc = update.message.location
         file_name = f"ubicacion_{ts}.txt"
@@ -220,9 +222,8 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ No pude procesar este tipo de archivo.")
         return
 
-    # 2. ¿Hay una sesión de carpeta activa?
+    # 2. Verificar si hay carpeta activa
     folder_id = user_data.get('current_folder_id')
-    # Path de Dropbox o ID de Google Drive
     cloud_parent = user_data.get('current_cloud_id') 
 
     if folder_id:
@@ -231,24 +232,25 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             local_path = os.path.join("descargas", file_name)
             
-            # Descarga si no es ubicación (la ubicación ya la creamos arriba)
+            # Descarga desde Telegram (si no es una ubicación generada manualmente)
             if not is_location:
                 tg_file = await context.bot.get_file(file_id)
                 await tg_file.download_to_drive(local_path)
 
-            # --- IA: EXTRAER TEXTO / TRANSCRIPCIÓN ---
+            # --- IA: EXTRACCIÓN Y EMBEDDING ---
+            # extract_text ya debe limpiar los caracteres \x00
             texto_extraido = await AIHandler.extract_text(local_path)
             vector = await AIHandler.get_embedding(texto_extraido) if texto_extraido else None
 
-            # --- SUBIDA A NUBE ---
-            # Intentamos Dropbox por defecto en modo carpeta activa
+            # --- SUBIDA A LA NUBE (Dropbox por defecto en modo directo) ---
             cloud_url = await dropbox_svc.upload(local_path, file_name, folder=cloud_parent or "General")
 
-            if cloud_url:
-                # Si por error las funciones de servicio devolvieron una tupla, extraemos el string
-                if isinstance(cloud_url, tuple): cloud_url = cloud_url[0]
+            # Validar que recibimos un string (evitar el error de la tupla)
+            if isinstance(cloud_url, tuple): 
+                cloud_url = cloud_url[0]
 
-                # Registro en Base de Datos
+            if cloud_url and isinstance(cloud_url, str):
+                # Registro en Base de Datos Supabase
                 db.register_file(
                     telegram_id=update.effective_user.id,
                     name=file_name,
@@ -260,6 +262,7 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     folder_id=folder_id
                 )
                 
+                # Confirmación al usuario solo si todo el proceso fue exitoso
                 await msg.edit_text(
                     f"✅ *Guardado con éxito*\n\n"
                     f"📄 `{file_name}`\n"
@@ -270,19 +273,22 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await msg.edit_text("❌ Error: La nube no devolvió un enlace válido.")
             
-            # Limpieza
-            if os.path.exists(local_path): os.remove(local_path)
+            # Limpiar archivo temporal
+            if os.path.exists(local_path): 
+                os.remove(local_path)
             
         except Exception as e:
-            print(f"Error en handle_any_file: {e}")
-            await msg.edit_text(f"❌ Error crítico: {str(e)}")
+            print(f"Error crítico en handle_any_file: {e}")
+            await msg.edit_text(f"❌ Error interno: {str(e)}")
     
     else:
-        # MODO MANUAL: No hay carpeta, mostramos el menú de selección de nubes
-        if 'file_queue' not in user_data: user_data['file_queue'] = []
+        # MODO MANUAL: No hay carpeta activa, mostramos menú de selección de nube
+        if 'file_queue' not in user_data: 
+            user_data['file_queue'] = []
         user_data['file_queue'].append({'id': file_id, 'name': file_name, 'type': 'Archivo'})
         
-        if 'menu_timer' in user_data: user_data['menu_timer'].cancel()
+        if 'menu_timer' in user_data: 
+            user_data['menu_timer'].cancel()
         
         async def _wait():
             await asyncio.sleep(1.2)

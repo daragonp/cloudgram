@@ -82,24 +82,23 @@ class DropboxService(CloudService):
 
     async def upload(self, local_path, file_name, folder="General"):
         if not self.dbx: return None
-        # Aseguramos un path limpio
         cloud_path = f"/{folder}/{file_name}".replace("//", "/")
         try:
             with open(local_path, "rb") as f:
                 self.dbx.files_upload(f.read(), cloud_path, mode=WriteMode('overwrite'))
             
-            # Intentar obtener o crear link
+            # Forzamos la obtención del link
             try:
                 link_metadata = self.dbx.sharing_create_shared_link_with_settings(cloud_path)
                 url = link_metadata.url
-            except dropbox.exceptions.ApiError as e:
-                if "shared_link_already_exists" in str(e):
-                    links = self.dbx.sharing_list_shared_links(path=cloud_path, direct_only=True).links
-                    url = links[0].url if links else None
-                else: raise e
+            except Exception:
+                # Si ya existe, lo listamos
+                links = self.dbx.sharing_list_shared_links(path=cloud_path, direct_only=True).links
+                url = links[0].url if links else None
             
-            # IMPORTANTE: Retornar solo el string transformado para descarga directa
-            return url.replace('?dl=0', '?dl=1') if url else None
+            if url:
+                return url.replace('?dl=0', '?dl=1')
+            return None
         except Exception as e:
-            print(f"❌ Error Dropbox Upload: {e}")
+            print(f"❌ Error real en Dropbox: {e}")
             return None

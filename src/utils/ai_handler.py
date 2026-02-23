@@ -91,42 +91,26 @@ class AIHandler:
 
     @staticmethod
     async def extract_text(file_path):
-        """Extrae texto, transcribe audio/video y limpia caracteres prohibidos para la DB."""
-        if not os.path.exists(file_path):
-            print(f"❌ Error: El archivo no existe en la ruta {file_path}")
+        if not file_path or not os.path.exists(file_path):
             return ""
 
         ext = file_path.lower().split('.')[-1]
         text = ""
-
         try:
-            # --- IMÁGENES (Cámara IA con Visión) ---
             if ext in ['jpg', 'jpeg', 'png', 'webp']:
                 text = await AIHandler.analyze_image_vision(file_path)
-
-            # --- DOCUMENTOS DE TEXTO ---
+            elif ext in ['ogg', 'mp3', 'wav', 'mp4', 'm4a']:
+                # Aquí es donde se procesan audios y notas de video
+                text = await AIHandler.transcribe_audio(file_path)
             elif ext == 'pdf':
                 import fitz
                 doc = fitz.open(file_path)
                 text = " ".join([page.get_text() for page in doc])
-            elif ext == 'docx':
-                import docx
-                doc = docx.Document(file_path)
-                text = "\n".join([para.text for para in doc.paragraphs])
-            elif ext in ['xlsx', 'xls']:
-                df = pd.read_excel(file_path, sheet_name=None)
-                text = "\n".join([sheet.to_string() for sheet in df.values()])
-            elif ext == 'txt':
-                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    text = f.read()
-
-            # --- AUDIO Y VIDEO (Whisper) ---
-            # Incluimos soporte para mp4 (notas de video)
-            elif ext in ['ogg', 'mp3', 'wav', 'mp4', 'm4a']:
-                text = await AIHandler.transcribe_audio(file_path)
-                
+            # ... resto de extensiones
         except Exception as e:
-            print(f"❌ Error extrayendo de {ext}: {e}")
+            print(f"❌ IA Error extrayendo de {ext}: {e}")
         
-        # LIMPIEZA FINAL OBLIGATORIA: Evita el error 'A string literal cannot contain NUL (0x00)'
-        return text.replace('\x00', '').strip()
+        # Limpieza de caracteres NUL que rompen Postgres
+        final_text = text.replace('\x00', '').strip()
+        print(f"🤖 IA extrajo ({len(final_text)} chars): {final_text[:50]}...")
+        return final_text

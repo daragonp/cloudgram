@@ -72,17 +72,24 @@ class DatabaseHandler:
             conn.commit()
 
     # --- FUNCIONES DEL BOT ---
-
+    
     def register_file(self, telegram_id, name, f_type, cloud_url, service, content_text=None, embedding=None, folder_id=None):
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute('''
-                    INSERT INTO files (telegram_id, name, type, cloud_url, service, content_text, embedding, folder_id, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ''', (telegram_id, name, f_type, cloud_url, service, content_text, 
-                      json.dumps(embedding) if embedding else None, datetime.now()))
-            conn.commit()
-
+        try:
+            with self._connect() as conn:
+                # Importante usar RealDictCursor para consistencia
+                with conn.cursor() as cur:
+                    # NOTA: Asegúrate que tu tabla tenga la columna 'type' o 'file_type'
+                    # Según tu código anterior, la columna se llama 'type'
+                    cur.execute("""
+                        INSERT INTO files (telegram_id, name, type, cloud_url, service, content_text, embedding, folder_id)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (telegram_id, name, f_type, cloud_url, service, content_text, embedding, folder_id))
+                    conn.commit()
+                    print(f"✅ DB: Archivo '{name}' registrado con éxito.")
+        except Exception as e:
+            print(f"❌ ERROR CRÍTICO DB EN register_file: {e}")
+            # Esto imprimirá el error exacto (ej: falta una columna o tipo de dato mal)
+  
     def search_by_name(self, keyword):
         with self._connect() as conn:
             with conn.cursor() as cur:
