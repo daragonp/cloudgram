@@ -155,6 +155,29 @@
     </div>
 </div>
 
+<div class="modal fade" id="progressModal" data-bs-backdrop="static" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content bg-dark border-secondary shadow-lg">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title text-cyan">⚙️ Consola de Indexación IA</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-4">
+                <div class="progress mb-3" style="height: 10px; background-color: #0d1117;">
+                    <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-info" style="width: 0%;"></div>
+                </div>
+                
+                <div id="logConsole" class="bg-black text-success p-3 rounded mb-2 small font-monospace" 
+                     style="height: 250px; overflow-y: auto; border: 1px solid #30363d;">
+                    > Esperando inicio del proceso...<br>
+                </div>
+                
+                <p id="statusText" class="small text-muted text-center">Iniciando comunicación con el servidor...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 // Inicializa la barra dinámica sin romper el linter CSS
 document.addEventListener("DOMContentLoaded", function () {
@@ -169,45 +192,40 @@ function startIndexing() {
     const modalElement = document.getElementById('progressModal');
     const modal = new bootstrap.Modal(modalElement);
     const progressBar = document.getElementById('progressBar');
+    const logConsole = document.getElementById('logConsole');
     const statusText = document.getElementById('statusText');
-    const btn = document.getElementById('btnIndexerMain');
-
-    btn.disabled = true;
-
+    
+    modal.show();
+    logConsole.innerHTML = "> [INFO] Solicitando ejecución de indexador...<br>";
+    
     fetch("/run-indexer", { method: "POST" })
         .then(() => {
-            modal.show();
-
             const eventSource = new EventSource("/progress-indexer");
 
             eventSource.onmessage = function(event) {
-                const progress = parseInt(event.data);
-
-                progressBar.style.width = progress + "%";
-                progressBar.innerHTML = progress + "%";
-
-                if (progress < 30)
-                    statusText.innerHTML = "Analizando archivos nuevos...";
-                else if (progress < 80)
-                    statusText.innerHTML = "Generando Embeddings y Visión IA...";
-                else if (progress < 100)
-                    statusText.innerHTML = "Finalizando y guardando en DB...";
-                else {
+                // Suponiendo que el indexador envía mensajes de texto o JSON
+                const data = event.data;
+                
+                // Si el mensaje es un número, es progreso, si es texto, es log
+                if (!isNaN(data)) {
+                    progressBar.style.width = data + "%";
+                    progressBar.innerHTML = data + "%";
+                } else {
+                    logConsole.innerHTML += `> ${data}<br>`;
+                    logConsole.scrollTop = logConsole.scrollHeight; // Auto-scroll
+                }
+                
+                if (data == "100" || data.includes("COMPLETADO")) {
                     eventSource.close();
-                    statusText.innerHTML = "¡Todo indexado correctamente!";
-                    setTimeout(() => { location.reload(); }, 1500);
+                    statusText.innerHTML = "✅ Proceso finalizado.";
+                    setTimeout(() => { location.reload(); }, 2000);
                 }
             };
 
             eventSource.onerror = function() {
+                logConsole.innerHTML += "<span class='text-danger'>> [ERROR] Conexión cerrada o error en el stream.</span><br>";
                 eventSource.close();
-                btn.disabled = false;
-                console.log("El indexador finalizó o se cerró la conexión.");
             };
-        })
-        .catch(err => {
-            alert("Error al iniciar el indexador: " + err);
-            btn.disabled = false;
         });
 }
 </script>

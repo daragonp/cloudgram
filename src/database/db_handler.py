@@ -134,8 +134,6 @@ class DatabaseHandler:
                 cur.execute('DELETE FROM files WHERE id = %s', (file_id,))
             conn.commit()
 
-    # --- GESTIÓN DE USUARIOS ---
-
     def get_user_by_email(self, email):
         with self._connect() as conn:
             # RealDictCursor emula el sqlite3.Row para acceder por nombre: user['id']
@@ -232,6 +230,7 @@ class DatabaseHandler:
                 return cur.fetchone()
 
     def get_parent_folder(self, folder_id):
+        
         """Obtiene la carpeta padre para el botón 'Volver atrás'"""
         if not folder_id or folder_id == "root": return None
         with self._connect() as conn:
@@ -243,3 +242,30 @@ class DatabaseHandler:
                     WHERE c.id = %s
                 """, (folder_id,))
                 return cur.fetchone()
+
+    def get_all_files(self):
+        """Retorna todos los archivos registrados para la exportación CSV."""
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT id, name, cloud_url, service, type, content_text, created_at 
+                        FROM files ORDER BY created_at DESC
+                    """)
+                    columns = [desc[0] for desc in cur.description]
+                    return [dict(zip(columns, row)) for row in cur.fetchall()]
+        except Exception as e:
+            print(f"❌ Error en get_all_files: {e}")
+            return []
+
+    def reset_failed_embeddings(self):
+        """Limpia el campo embedding de los archivos que no se procesaron bien."""
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE files SET embedding = NULL WHERE content_text IS NULL OR content_text = ''")
+                    conn.commit()
+                    return True
+        except Exception as e:
+            print(f"❌ Error en reset_failed_embeddings: {e}")
+            return False

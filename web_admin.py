@@ -152,16 +152,16 @@ def reset_errors():
 @login_required
 def run_indexer_endpoint():
     try:
-        def run_async_indexer():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(ejecutar_indexacion_completa())
-            loop.close()
+        def run_sync():
+            # Importamos aquí para evitar ciclos
+            from indexador import ejecutar_indexacion_completa
+            asyncio.run(ejecutar_indexacion_completa())
 
-        threading.Thread(target=run_async_indexer, daemon=True).start()
-        flash("🚀 Proceso de indexación iniciado en segundo plano.", "info")
+        thread = threading.Thread(target=run_sync, daemon=True)
+        thread.start()
+        flash("🚀 Indexación iniciada en segundo plano.", "info")
     except Exception as e:
-        flash(f"❌ Error al iniciar el indexador: {e}", "error")
+        flash(f"❌ Error: {e}", "error")
     return redirect(url_for('dashboard'))
 
 @app.route('/progress-indexer')

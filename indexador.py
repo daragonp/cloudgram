@@ -114,7 +114,7 @@ def ejecutar_indexacion_completa():
     except Exception as e:
         return f"Error: {str(e)}"
 
-def ejecutar_indexacion_paso_a_paso():
+async def ejecutar_indexacion_paso_a_paso():
     """Generador para la barra de progreso"""
     yield "data: 20\n\n"
     res = ejecutar_indexacion_completa()
