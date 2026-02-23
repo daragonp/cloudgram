@@ -9,6 +9,7 @@ from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 from geopy.geocoders import Nominatim
 import geopy.geocoders
+from src.init_services import db, dropbox_svc, drive_svc, openai_client
 
 # Configuración SSL para Mac
 ctx = ssl.create_default_context(cafile=certifi.where())
@@ -126,6 +127,7 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['menu_timer'] = asyncio.create_task(_wait())
     
 async def show_cloud_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
+
     user_data = context.user_data
     queue = user_data.get('file_queue', [])
     if not queue: return
@@ -174,3 +176,112 @@ async def show_cloud_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ed
     except Exception as e:
         if "Message is not modified" not in str(e):
             print(f"Error menú: {e}")
+
+async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Súper Función: Detecta el tipo de archivo y decide si subir directo 
+    (si hay carpeta activa) o mostrar menú de selección.
+    """
+    user_data = context.user_data
+    file_id, file_name, file_type = None, "archivo_desconocido", "documento"
+    
+    # 1. Identificación del archivo (Tu lógica de detección)
+    if update.message.document:
+        file_id = update.message.document.file_id
+        file_name = update.message.document.file_name
+    elif update.message.photo:
+        file_id = update.message.photo[-1].file_id
+        file_name = f"foto_{int(time.time())}.jpg"
+    # ... (puedes añadir los otros tipos aquí: audio, video, etc.)
+
+    # 2. ¿Hay una sesión de carpeta activa?
+    folder_id = user_data.get('current_folder_id')
+    cloud_parent_path = user_data.get('current_cloud_id') # Ej: "/Proyectos"
+
+    if folder_id:
+        # MODO DIRECTO: El usuario está "dentro" de una carpeta
+        msg = await update.message.reply_text(f"📥 Subiendo directo a *{user_data.get('current_path_name')}*...", parse_mode=ParseMode.MARKDOWN)
+        
+        try:
+            # Descarga
+            tg_file = await context.bot.get_file(file_id)
+            local_path = os.path.join("descargas", file_name)
+            await tg_file.download_to_drive(local_path)
+
+            # Subida (Usamos la instancia global de Dropbox por defecto o la que prefieras)
+            from main import dropbox_svc, db
+            cloud_url = await dropbox_svc.upload(local_path, file_name, folder=cloud_parent_path)
+
+            if cloud_url:
+                db.register_file(
+                    telegram_id=update.effective_user.id,
+                    name=file_name,
+                    cloud_url=cloud_url,
+                    service='dropbox',
+                    folder_id=folder_id
+                )
+                await msg.edit_text(f"✅ ¡Listo! Guardado en *{user_data.get('current_path_name')}*", parse_mode=ParseMode.MARKDOWN)
+            
+            if os.path.exists(local_path): os.remove(local_path)
+            
+        except Exception as e:
+            await msg.edit_text(f"❌ Error en subida directa: {e}")
+    
+    else:
+        # MODO MANUAL: No hay carpeta, mostramos el menú de selección de nubes (Tu lógica anterior)
+        if 'file_queue' not in user_data: user_data['file_queue'] = []
+        user_data['file_queue'].append({'id': file_id, 'name': file_name, 'type': 'Archivo'})
+        
+        if 'menu_timer' in user_data: user_data['menu_timer'].cancel()
+        
+        async def _wait():
+            await asyncio.sleep(1.2)
+            await show_cloud_menu(update, context)
+        
+        user_data['menu_timer'] = asyncio.create_task(_wait())
+
+def generar_teclado_explorador(folder_id=None):
+    """
+    Genera un teclado dinámico basado en el contenido de la DB.
+    Debe estar en message_handlers.py para que el bot la use al navegar.
+    """
+    from main import db # Importación local para evitar líos de circularidad
+    items = db.get_folder_contents(folder_id)
+    keyboard = []
+    
+    # Botón para subir de nivel
+    if folder_id:
+        parent = db.get_parent_folder(folder_id) # Asegúrate de tener este método en db_handler
+        parent_id = parent['id'] if parent else "root"
+        keyboard.append([InlineKeyboardButton("⬆️ Volver atrás", callback_data=f"cd_{parent_id}")])
+
+    # Listar carpetas primero
+    for item in items:
+        if item['type'] == 'folder':
+            keyboard.append([InlineKeyboardButton(f"📁 {item['name']}", callback_data=f"cd_{item['id']}")])
+        else:
+            keyboard.append([InlineKeyboardButton(f"📄 {item['name']}", callback_data=f"info_{item['id']}")])
+            
+    # Botón de acción
+    keyboard.append([InlineKeyboardButton("➕ Crear Carpeta", callback_data=f"mkdir_{folder_id or 'root'}")])
+            
+    return InlineKeyboardMarkup(keyboard)
+
+async def explorar(update, context):
+    folder_id = context.args[0] if context.args else None
+    items = db.get_folder_contents(folder_id)
+    keyboard = []
+    
+    for item in items:
+        icon = "📁" if item['type'] == 'folder' else "📄"
+        # CAMBIADO: Usamos 'cd_' para carpetas para que coincida con cambiar_directorio
+        callback = f"cd_{item['id']}" if item['type'] == 'folder' else f"info_{item['id']}"
+        keyboard.append([InlineKeyboardButton(f"{icon} {item['name']}", callback_data=callback)])
+    
+    keyboard.append([InlineKeyboardButton("➕ Crear Carpeta", callback_data=f"mkdir_{folder_id or 'root'}")])
+    
+    # Botón para crear carpeta aquí mismo
+    keyboard.append([InlineKeyboardButton("➕ Crear Carpeta", callback_data=f"mkdir_{folder_id or 'root'}")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("📂 *Explorador de Archivos:*", reply_markup=reply_markup, parse_mode='Markdown')

@@ -73,12 +73,12 @@ class DatabaseHandler:
 
     # --- FUNCIONES DEL BOT ---
 
-    def register_file(self, telegram_id, name, f_type, cloud_url, service, content_text=None, embedding=None):
+    def register_file(self, telegram_id, name, f_type, cloud_url, service, content_text=None, embedding=None, folder_id=None):
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute('''
-                    INSERT INTO files (telegram_id, name, type, cloud_url, service, content_text, embedding, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO files (telegram_id, name, type, cloud_url, service, content_text, embedding, folder_id, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ''', (telegram_id, name, f_type, cloud_url, service, content_text, 
                       json.dumps(embedding) if embedding else None, datetime.now()))
             conn.commit()
@@ -177,3 +177,38 @@ class DatabaseHandler:
             print("🛢️ CONECTADO A: Supabase (PostgreSQL)")
         else:
             print("⚠️ CONECTADO A: SQLite Local (¡Cuidado en Railway!)")
+
+    def create_folder(self, name, service, cloud_folder_id, parent_id=None):
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO folders (name, service, cloud_folder_id, parent_id)
+                    VALUES (%s, %s, %s, %s) RETURNING id
+                """, (name, service, cloud_folder_id, parent_id))
+                return cur.fetchone()['id']
+
+    def get_folder_contents(self, parent_id=None):
+        """Retorna subcarpetas y archivos de una carpeta específica"""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                # Traer carpetas
+                cur.execute("SELECT id, name, 'folder' as type FROM folders WHERE parent_id IS %s", (parent_id,))
+                subfolders = cur.fetchall()
+                
+                # Traer archivos
+                cur.execute("SELECT id, name, 'file' as type FROM files WHERE folder_id IS %s", (parent_id,))
+                files = cur.fetchall()
+                
+                return subfolders + files
+            
+    def get_parent_folder(self, folder_id):
+        """Obtiene la carpeta padre de una carpeta dada para navegar hacia atrás"""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT p.id, p.name 
+                    FROM folders c 
+                    JOIN folders p ON c.parent_id = p.id 
+                    WHERE c.id = %s
+                """, (folder_id,))
+                return cur.fetchone()

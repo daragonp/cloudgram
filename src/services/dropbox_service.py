@@ -79,3 +79,13 @@ class DropboxService(CloudService):
         except Exception as e:
             print(f"Error listando Dropbox: {e}")
             return []
+    
+    async def create_folder(self, folder_name, parent_path=""):
+        if not self.dbx: return None
+        full_path = f"{parent_path}/{folder_name}".replace("//", "/")
+        try:
+            res = self.dbx.files_create_folder_v2(full_path)
+            return res.metadata.path_display
+        except Exception as e:
+            print(f"Error en Dropbox mkdir: {e}")
+            raise e

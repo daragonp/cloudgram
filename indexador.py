@@ -9,7 +9,7 @@ from telegram import Bot
 from dotenv import load_dotenv
 
 load_dotenv()
-db = DatabaseHandler()
+from src.init_services import db, dropbox_svc, drive_svc
 
 # Inicialización de servicios
 dropbox_svc = DropboxService(

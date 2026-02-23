@@ -2,22 +2,17 @@
 import os
 import json
 import warnings
-import numpy as np
-from datetime import datetime
-from dotenv import load_dotenv
-from telegram import BotCommand
 import platform
 import sys
-from telegram.ext import CommandHandler
-from telegram.constants import ParseMode
-import json
 import numpy as np
+from datetime import datetime
+from dotenv import load_dotenv  # <-- ESTO FALTABA
 
-# 1. CARGA DE ENTORNO
+# 1. CARGA DE ENTORNO (Debe ir antes de importar servicios)
 load_dotenv()
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     ApplicationBuilder, 
     CommandHandler, 
@@ -28,27 +23,13 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
-# Importaciones de arquitectura
-from src.handlers.message_handlers import start, handle_any_file, show_cloud_menu
-from src.services.dropbox_service import DropboxService
-from src.services.google_drive_service import GoogleDriveService
-from src.services.onedrive_service import OneDriveService
-from src.utils.ai_handler import AIHandler
-#from src.database.db_handler_local import DatabaseHandler
-from src.database.db_handler import DatabaseHandler
+# 2. IMPORTACIÓN DE SERVICIOS INICIALIZADOS
+# Asegúrate de que este archivo exista en src/init_services.py
+from src.init_services import db, dropbox_svc, drive_svc, openai_client 
 
-# 2. INICIALIZACIÓN DE SERVICIOS Y BD
-db = DatabaseHandler()
-dropbox_svc = DropboxService(
-    app_key=os.getenv("DROPBOX_APP_KEY"),
-    app_secret=os.getenv("DROPBOX_APP_SECRET"),
-    refresh_token=os.getenv("DROPBOX_REFRESH_TOKEN")
-)
-drive_svc = GoogleDriveService()
-onedrive_svc = OneDriveService(
-    client_id=os.getenv("ONEDRIVE_CLIENT_ID"),
-    tenant_id=os.getenv("ONEDRIVE_TENANT_ID")
-)
+# 3. IMPORTACIÓN DE HANDLERS
+from src.handlers.message_handlers import start, handle_any_file, show_cloud_menu, explorar, generar_teclado_explorador
+from src.utils.ai_handler import AIHandler
 
 def print_server_welcome():
     """
@@ -80,15 +61,6 @@ def print_server_welcome():
         else:
             print(f"   [OK] Detectado: /{folder}")
 
-    # 3. Verificación de Base de Datos
-    """ db_file = "data/cloudgram.db"
-    if os.path.exists(db_file):
-        size_kb = os.path.getsize(db_file) / 1024
-        print(f"🗄️  Base de Datos:  DETECTADA ({size_kb:.2f} KB)")
-    else:
-        print("🗄️  Base de Datos:  NUEVA (se inicializará al primer registro)")
- """
-    # Sustituye esa parte en main.py por esto:
     db_url = os.getenv("DATABASE_URL")
     if db_url and "supabase" in db_url.lower():
         print(f"🗄️  Base de Datos:  CONECTADA A SUPABASE (Nube)")
@@ -175,34 +147,27 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             results = user_data.get('search_results', [])
             
             if 0 <= idx < len(results):
-                # Extraemos el archivo de la lista para que desaparezca visualmente
                 fid, name, url, service = results.pop(idx)
-                
                 msg = await update.message.reply_text(f"⏳ Eliminando `{name}`...")
                 
-                # 1. Borrado físico en la nube
                 cloud_deleted = False
                 try:
                     if service == 'dropbox':
                         cloud_deleted = await dropbox_svc.delete_file(f"/{name}")
                     elif service == 'drive':
-                        # Asegúrate de tener implementado drive_svc.delete_file
                         cloud_deleted = await drive_svc.delete_file(name)
                 except Exception as e:
                     print(f"Error en borrado físico: {e}")
 
-                # 2. Borrado lógico en Base de Datos
                 db.delete_file_by_id(fid)
                 
                 status = "✅ Eliminado por completo." if cloud_deleted else "⚠️ Eliminado solo de la Base de Datos."
                 await msg.edit_text(f"{status}\nArchivo: `{name}`")
 
-                # --- REFRESCAR LISTA AUTOMÁTICAMENTE ---
                 if not results:
                     user_data['state'] = None
                     return await update.message.reply_text("📭 Ya no quedan más archivos en esta búsqueda.")
                 
-                # Ajuste de página si borramos el último elemento de una página
                 items_per_page = 10
                 if user_data['current_page'] * items_per_page >= len(results):
                     user_data['current_page'] = max(0, user_data['current_page'] - 1)
@@ -212,7 +177,7 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 return await update.message.reply_text(f"❌ Número inválido. Elige entre 1 y {len(results)}.")
 
-    # --- LÓGICA 2: RENOMBRADO (Se mantiene igual) ---
+    # --- LÓGICA 2: RENOMBRADO ---
     if state == 'renaming' and user_data.get('file_queue'):
         file_info = user_data['file_queue'][-1]
         old_name = file_info['name']
@@ -226,7 +191,47 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(f"✅ Renombrado a: `{new_name}`")
         return await show_cloud_menu(update, context, edit=False)
-    
+
+    # --- LÓGICA 3: CREACIÓN DE CARPETAS (NUEVA) ---
+    if state == 'waiting_folder_name':
+        folder_name = text
+        parent_id = user_data.get('parent_folder_id') # Viene del callback mkdir_
+        
+        # Validación básica de nombre
+        if any(c in folder_name for c in ['/', '\\', ':', '*', '?', '"', '<', '>', '|']):
+            return await update.message.reply_text("❌ El nombre contiene caracteres no permitidos.")
+
+        status_msg = await update.message.reply_text(f"🛠️ Creando carpeta `{folder_name}` en la nube...")
+        
+        try:
+            # 1. Determinar el path del padre si existe (para Dropbox)
+            parent_path = ""
+            if parent_id:
+                p_folder = db.get_folder_by_id(parent_id)
+                parent_path = p_folder['cloud_folder_id'] if p_folder else ""
+
+            # 2. Crear en la Nube (Dropbox por defecto o según servicio activo)
+            # Asegúrate que dropbox_svc.create_folder devuelva el path/id creado
+            cloud_id = await dropbox_svc.create_folder(folder_name, parent_path)
+            
+            # 3. Registrar en la Base de Datos
+            db.create_folder(
+                name=folder_name, 
+                service='dropbox', 
+                cloud_folder_id=cloud_id, 
+                parent_id=parent_id
+            )
+            
+            # Limpiar estado
+            user_data['state'] = None
+            user_data.pop('parent_folder_id', None)
+            
+            await status_msg.edit_text(f"✅ Carpeta `{folder_name}` creada y registrada correctamente.")
+            
+        except Exception as e:
+            print(f"Error creando carpeta: {e}")
+            await status_msg.edit_text(f"❌ Error al crear la carpeta: {str(e)}")
+
 # 4. PROCESO DE SUBIDA Y CALLBACKS
 async def upload_process(update, context, target_files_info: list, predefined_embedding=None):
     user_data = context.user_data
@@ -277,7 +282,8 @@ async def upload_process(update, context, target_files_info: list, predefined_em
                         cloud_url=url,
                         service=cloud,
                         content_text=texto_extraido,
-                        embedding=vector_ia
+                        embedding=vector_ia,
+                        folder_id=user_data.get('current_folder_id')
                     )
             except Exception as e:
                 print(f"Error subida {cloud}: {e}")
@@ -410,29 +416,38 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data.pop('search_results', None)
         return await query.edit_message_text("🚫 Acción de eliminación cancelada.")
 
-    # .
+    elif data.startswith('mkdir_'):
+        parent_id = data.split('_')[1]
+        context.user_data['parent_folder_id'] = None if parent_id == 'root' else parent_id
+        context.user_data['state'] = 'waiting_folder_name'
+        
+        await query.message.reply_text(
+            "📁 *Nueva Carpeta*\nEscribe el nombre que deseas ponerle:",
+            parse_mode=ParseMode.MARKDOWN
+        )
 # 5. BÚSQUEDA IA Y ELIMINAR
 
-async def search_ia_command(update, context):
+async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Búsqueda semántica usando embeddings de OpenAI y registros de Supabase"""
+    if not context.args:
+        return await update.message.reply_text("🔎 *Uso:* `/buscar_ia concepto` (ej: contrato de renta)", parse_mode=ParseMode.MARKDOWN)
+    
     query_text = " ".join(context.args).lower()
-    
-    if not query_text:
-        return await update.message.reply_text("🔎 Uso: `/buscar_ia concepto`")
-    
-    # 1. Mensaje inicial
-    msg = await update.message.reply_text("🤖 Analizando base de datos...")
+    msg = await update.message.reply_text("🤖 Analizando mi memoria neuronal...")
     
     try:
-        # 2. Obtener Embedding de la consulta
-        query_vector = await AIHandler.get_embedding(query_text)
-        if not query_vector:
-            return await msg.edit_text("❌ No pude procesar tu búsqueda (Error de IA).")
+        # 1. Obtener Embedding de la consulta (Usando el openai_client global)
+        response = openai_client.embeddings.create(
+            input=[query_text],
+            model="text-embedding-3-small"
+        )
+        query_vector = response.data[0].embedding
 
-        # 3. Obtener archivos (Asegúrate de que db_handler devuelva los 6 valores)
+        # 2. Obtener archivos con embeddings de la DB (Variable db global)
         files = db.get_all_with_embeddings()
         results = []
         
-        # 4. Procesar similitud
+        # 3. Procesar similitud (Cálculo de Coseno)
         for f_id, name, url, service, content, emb_json in files:
             try:
                 if not emb_json or emb_json in ["error_limit", "[]"]: 
@@ -440,35 +455,33 @@ async def search_ia_command(update, context):
                 
                 emb = json.loads(emb_json)
                 
-                # Similitud de coseno
+                # Math: Dot product / (norm_a * norm_b)
                 score = np.dot(query_vector, emb) / (np.linalg.norm(query_vector) * np.linalg.norm(emb))
                 
-                # Refuerzo por palabra clave
+                # Bonus por coincidencia exacta en nombre o contenido
                 if query_text in (content or "").lower() or query_text in name.lower():
-                    score += 0.35
+                    score += 0.2
                     
-                if score > 0.30:
+                if score > 0.35: # Umbral de relevancia
                     results.append((score, name, url, service))
-            except:
-                continue # Si un archivo está corrupto, saltamos al siguiente
+            except Exception as e:
+                continue 
         
-        # 5. Mostrar resultados
         results.sort(key=lambda x: x[0], reverse=True)
         
         if not results:
-            return await msg.edit_text("❌ No encontré nada relacionado con ese contexto.")
+            return await msg.edit_text("😔 No encontré nada relacionado con ese contexto.")
         
-        out = "🤖 *Resultados de búsqueda inteligente:*\n\n"
+        out = "🎯 *Resultados de búsqueda inteligente:*\n\n"
         for s, n, u, sv in results[:5]:
-            # Limitar score a 100% máximo
             final_score = min(int(s * 100), 100)
-            out += f"🔹 [{n}]({u}) \n    _Servicio: {sv.capitalize()}_ (Confianza: {final_score}%)\n\n"
+            out += f"🔹 [{n}]({u}) \n    _Confianza: {final_score}%_ | `{sv.upper()}`\n\n"
         
         await msg.edit_text(out, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
 
     except Exception as e:
-        print(f"❌ ERROR CRÍTICO EN BUSQUEDA: {e}")
-        await msg.edit_text("⚠️ Ocurrió un error inesperado. El proceso ha sido liberado.")
+        print(f"❌ ERROR EN BUSQUEDA IA: {e}")
+        await msg.edit_text("⚠️ No pude completar la búsqueda. Revisa los logs del servidor.")
 
 async def cancelar_handler(update, context):
     """Limpia cualquier estado y responde con éxito"""
@@ -557,6 +570,32 @@ async def post_init(application):
         BotCommand("buscar_ia", "Búsqueda inteligente"),
         BotCommand("eliminar", "Borrar registros")
     ])
+
+# 7. CARPETAS Y ARCHIVOS (EXPLORADOR)
+
+async def cambiar_directorio(update, context):
+    query = update.callback_query
+    await query.answer()
+    
+    # Supongamos que el callback_data es "cd_123"
+    folder_id = query.data.split('_')[1]
+    
+    if folder_id == "root":
+        context.user_data['current_folder_id'] = None
+        context.user_data['current_path_name'] = "Raíz"
+    else:
+        folder = db.get_folder_by_id(folder_id)
+        context.user_data['current_folder_id'] = folder['id']
+        context.user_data['current_path_name'] = folder['name']
+        context.user_data['current_cloud_id'] = folder['cloud_folder_id']
+
+    await query.edit_message_text(
+        f"📂 Estás en: *{context.user_data['current_path_name']}*\n"
+        "Ahora, cualquier archivo que envíes se guardará aquí.",
+        parse_mode='Markdown'
+    )
+
+
 
 if __name__ == '__main__':
     print_server_welcome()

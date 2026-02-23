@@ -121,3 +121,14 @@ class GoogleDriveService(CloudService):
         except Exception as e:
             print(f"❌ Error borrando en Google Drive: {e}")
             return False
+        
+    async def create_folder(self, folder_name, parent_id=None):
+        service = self._get_service()
+        metadata = {
+            'name': folder_name,
+            'mimeType': 'application/vnd.google-apps.folder'
+        }
+        if parent_id:
+            metadata['parents'] = [parent_id]
+        folder = service.files().create(body=metadata, fields='id').execute()
+        return folder.get('id')
