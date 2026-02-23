@@ -230,7 +230,7 @@ async def voice_options_callback(update: Update, context: ContextTypes.DEFAULT_T
     local_audio = os.path.join("descargas", voice_data['file_name'])
     local_txt = local_audio.replace(".ogg", ".txt")
     
-    # Detección de servicio
+    # Detectar servicio cloud según folder_id
     folder_id = voice_data.get('folder_id')
     svc = drive_svc if folder_id and not str(folder_id).startswith('/') else dropbox_svc
     svc_name = "drive" if svc == drive_svc else "dropbox"
@@ -275,3 +275,31 @@ async def explorar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard.append([InlineKeyboardButton("➕ Crear Carpeta", callback_data=f"mkdir_{folder_id or 'root'}")])
     await (update.callback_query.edit_message_text if update.callback_query else update.message.reply_text)(
         f"📂 *Explorador:* `{nombre_ruta}`", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+    
+def generar_teclado_explorador(folder_id=None):
+    """
+    Genera un teclado dinámico basado en el contenido de la DB.
+    Debe estar en message_handlers.py para que el bot la use al navegar.
+    """
+    from main import db # Importación local para evitar líos de circularidad
+    items = db.get_folder_contents(folder_id)
+    keyboard = []
+    
+    # Botón para subir de nivel
+    if folder_id:
+        parent = db.get_parent_folder(folder_id) # Asegúrate de tener este método en db_handler
+        parent_id = parent['id'] if parent else "root"
+        keyboard.append([InlineKeyboardButton("⬆️ Volver atrás", callback_data=f"cd_{parent_id}")])
+
+    # Listar carpetas primero
+    for item in items:
+        if item['type'] == 'folder':
+            keyboard.append([InlineKeyboardButton(f"📁 {item['name']}", callback_data=f"cd_{item['id']}")])
+        else:
+            keyboard.append([InlineKeyboardButton(f"📄 {item['name']}", callback_data=f"info_{item['id']}")])
+            
+    # Botón de acción
+    keyboard.append([InlineKeyboardButton("➕ Crear Carpeta", callback_data=f"mkdir_{folder_id or 'root'}")])
+            
+    return InlineKeyboardMarkup(keyboard)
+
