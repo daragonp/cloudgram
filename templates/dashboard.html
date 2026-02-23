@@ -55,10 +55,13 @@
         </div>
 
         <div class="col-md-3">
-            <div class="card p-3 shadow-sm h-100 border-danger">
-                <h6 class="text-danger small text-uppercase">Pendientes / Error</h6>
-                <h2 class="fw-bold mb-0 text-danger">{{ total_total - total_ia }}</h2>
-            </div>
+            <a href="{{ url_for('archivos_errores') }}" class="text-decoration-none">
+                <div class="card p-3 shadow-sm h-100 border-danger bg-dark card-hover" style="cursor: pointer; transition: 0.3s;">
+                    <h6 class="text-danger small text-uppercase">Pendientes / Error</h6>
+                    <h2 class="fw-bold mb-0 text-danger">{{ total_total - total_ia }}</h2>
+                    <small class="text-muted mt-2 d-block">Ver listado →</small>
+                </div>
+            </a>
         </div>
     </div>
 

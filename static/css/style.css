@@ -17,6 +17,10 @@ body {
     border: 1px solid #30363d;
 }
 
+.card-hover:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 5px 15px rgba(220, 53, 69, 0.2) !important;
+    
 /* List group */
 .list-group-item {
     background-color: transparent !important;

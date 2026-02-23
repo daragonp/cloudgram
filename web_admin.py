@@ -232,6 +232,26 @@ def status_check():
         flash(f"Error de diagnóstico: {e}", "error")
     return redirect(url_for('dashboard'))
 
+@app.route('/archivos-errores')
+@login_required
+def archivos_errores():
+    try:
+        # Consultamos archivos donde el embedding es nulo o tiene marcadores de error
+        with db._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id, name, cloud_url, service, created_at 
+                    FROM files 
+                    WHERE embedding IS NULL 
+                    OR embedding IN ('', '[]', 'error_limit')
+                    ORDER BY created_at DESC
+                """)
+                rows = cur.fetchall()
+        
+        return render_template('archivos_errores.html', files=rows)
+    except Exception as e:
+        flash(f"Error al cargar lista de errores: {e}", "error")
+        return redirect(url_for('dashboard'))
 
 if __name__ == '__main__':
     # Puerto dinámico para despliegues tipo Railway/Heroku

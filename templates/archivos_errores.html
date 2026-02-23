@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="text-danger">⚠️ Archivos Pendientes de Indexación</h2>
+            <p class="text-white-50">Estos archivos no se han procesado correctamente por la IA.</p>
+        </div>
+        <a href="{{ url_for('dashboard') }}" class="btn btn-outline-light">Volver al Dashboard</a>
+    </div>
+
+    <div class="card shadow-lg bg-dark border-secondary">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-dark table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>Nombre</th>
+                            <th>Servicio</th>
+                            <th>Fecha de Subida</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for fid, name, url, service, date in files %}
+                        <tr>
+                            <td>
+                                <span class="fw-bold">{{ name }}</span><br>
+                                <small><a href="{{ url }}" target="_blank" class="text-info text-decoration-none">Ver en nube</a></small>
+                            </td>
+                            <td><span class="badge bg-secondary">{{ service.upper() }}</span></td>
+                            <td><small class="text-muted">{{ date }}</small></td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-danger" onclick="confirmDelete('{{ fid }}', '{{ name }}')">🗑️ Eliminar</button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if not files %}
+                <div class="text-center py-5">
+                    <h5 class="text-success">✅ ¡No hay archivos con errores!</h5>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+function confirmDelete(id, name) {
+    if (confirm('¿Deseas eliminar "' + name + '"?')) {
+        window.location.href = "/delete/" + id;
+    }
+}
+</script>
+{% endblock %}
