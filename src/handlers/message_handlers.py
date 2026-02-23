@@ -10,10 +10,9 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, CallbackQueryHandler
 from geopy.geocoders import Nominatim
 import geopy.geocoders
-from main import db, dropbox_svc, drive_svc
-from src.utils.ai_handler import AIHandler
 
 from src.init_services import db, dropbox_svc, drive_svc, openai_client
+from src.utils.ai_handler import AIHandler
 
 # Configuración SSL para mi MacBook
 ctx = ssl.create_default_context(cafile=certifi.where())
@@ -51,6 +50,13 @@ async def buscar_ia_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await espera_msg.edit_text("❌ Error al procesar la búsqueda con IA.")
 
 async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from main import db, dropbox_svc, drive_svc
+    from src.utils.ai_handler import AIHandler
+    from datetime import datetime
+    import os
+    import time
+    import asyncio
+    import random
 
     user_data = context.user_data
     file_id, file_name, file_type = None, None, "documento"
