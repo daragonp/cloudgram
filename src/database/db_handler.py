@@ -258,7 +258,23 @@ class DatabaseHandler:
             print(f"❌ Error en get_all_files: {e}")
             return []
 
+    def get_file_by_name_and_service(self, name, service):
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT * FROM files WHERE name = %s AND service = %s",
+                        (name, service)
+                    )
+                    columns = [desc[0] for desc in cur.description]
+                    row = cur.fetchone()
+                    return dict(zip(columns, row)) if row else None
+        except Exception as e:
+            print(f"❌ Error en get_file_by_name_and_service: {e}")
+            return None
+    
     def reset_failed_embeddings(self):
+        
         """Limpia el campo embedding de los archivos que no se procesaron bien."""
         try:
             with self._connect() as conn:
@@ -269,3 +285,50 @@ class DatabaseHandler:
         except Exception as e:
             print(f"❌ Error en reset_failed_embeddings: {e}")
             return False
+        
+    def export_to_sql(self):
+        """Genera un string con el volcado SQL completo de la tabla files."""
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    # Obtener todos los registros
+                    cur.execute("SELECT * FROM files")
+                    rows = cur.fetchall()
+                    colnames = [desc[0] for desc in cur.description]
+                    
+                    sql_output = "-- CloudGram Backup SQL\n"
+                    sql_output += f"-- Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                    
+                    # Sentencia de creación (Ajusta los tipos según tu esquema real)
+                    sql_output += "CREATE TABLE IF NOT EXISTS files (\n"
+                    sql_output += "    id SERIAL PRIMARY KEY,\n"
+                    sql_output += "    telegram_id BIGINT,\n"
+                    sql_output += "    name TEXT,\n"
+                    sql_output += "    f_type TEXT,\n"
+                    sql_output += "    cloud_url TEXT,\n"
+                    sql_output += "    service TEXT,\n"
+                    sql_output += "    content_text TEXT,\n"
+                    sql_output += "    embedding VECTOR(1536), -- Si usas pgvector\n"
+                    sql_output += "    folder_id TEXT,\n"
+                    sql_output += "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n"
+                    sql_output += ");\n\n"
+
+                    # Generar Inserts
+                    for row in rows:
+                        values = []
+                        for val in row:
+                            if val is None:
+                                values.append("NULL")
+                            elif isinstance(val, (int, float)):
+                                values.append(str(val))
+                            else:
+                                # Escapar comillas simples para SQL
+                                safe_val = str(val).replace("'", "''")
+                                values.append(f"'{safe_val}'")
+                        
+                        sql_output += f"INSERT INTO files ({', '.join(colnames)}) VALUES ({', '.join(values)});\n"
+                    
+                    return sql_output
+        except Exception as e:
+            print(f"❌ Error generando SQL: {e}")
+            return f"-- Error en la exportación: {e}"

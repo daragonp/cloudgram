@@ -152,17 +152,23 @@ def reset_errors():
 @login_required
 def run_indexer_endpoint():
     try:
+        from indexador import ejecutar_indexacion_completa
+        
         def run_sync():
-            # Importamos aquí para evitar ciclos
-            from indexador import ejecutar_indexacion_completa
-            asyncio.run(ejecutar_indexacion_completa())
+            # Crear un nuevo loop para el hilo
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                # IMPORTANTE: Asegúrate de que ejecutar_indexacion_completa sea async def
+                loop.run_until_complete(ejecutar_indexacion_completa())
+            finally:
+                loop.close()
 
         thread = threading.Thread(target=run_sync, daemon=True)
         thread.start()
-        flash("🚀 Indexación iniciada en segundo plano.", "info")
+        return {"status": "success", "message": "Indexación iniciada"}, 200
     except Exception as e:
-        flash(f"❌ Error: {e}", "error")
-    return redirect(url_for('dashboard'))
+        return {"status": "error", "message": str(e)}, 500
 
 @app.route('/progress-indexer')
 @login_required
@@ -195,27 +201,21 @@ def perfil():
 @app.route('/download-db')
 @login_required
 def download_db():
+    """Genera y descarga un archivo .sql con toda la base de datos"""
     try:
-        files_data = db.get_all_files()
-        si = StringIO()
-        cw = csv.writer(si)
-        cw.writerow(['ID', 'Nombre', 'URL', 'Servicio', 'Tipo', 'Texto Extraído', 'Fecha'])
+        sql_content = db.export_to_sql()
         
-        for f in files_data:
-            cw.writerow([f.get('id'), f.get('name'), f.get('cloud_url'), 
-                         f.get('service'), f.get('type'), f.get('content_text'), 
-                         f.get('created_at')])
-        
-        output = si.getvalue()
         return Response(
-            output,
-            mimetype="text/csv",
-            headers={"Content-disposition": f"attachment; filename=backup_cloudgram_{datetime.now().strftime('%Y%m%d')}.csv"}
+            sql_content,
+            mimetype="application/sql",
+            headers={
+                "Content-disposition": f"attachment; filename=cloudgram_backup_{datetime.now().strftime('%Y%m%d_%H%M')}.sql"
+            }
         )
     except Exception as e:
-        flash(f"Error al exportar base de datos: {e}", "error")
+        flash(f"Error al exportar SQL: {e}", "error")
         return redirect(url_for('dashboard'))
-
+    
 @app.route('/status-check')
 @login_required
 def status_check():
@@ -226,6 +226,7 @@ def status_check():
     except Exception as e:
         flash(f"Error de diagnóstico: {e}", "error")
     return redirect(url_for('dashboard'))
+
 
 if __name__ == '__main__':
     # Puerto dinámico para despliegues tipo Railway/Heroku
