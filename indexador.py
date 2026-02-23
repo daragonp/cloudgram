@@ -1,17 +1,19 @@
 import asyncio
 import os
 import json
-from src.database.db_handler import DatabaseHandler  # <--- CORREGIDO
+import threading
+from src.database.db_handler import DatabaseHandler
 from src.utils.ai_handler import AIHandler
 from src.services.dropbox_service import DropboxService
 from src.services.google_drive_service import GoogleDriveService
 from telegram import Bot
 from dotenv import load_dotenv
+from datetime import datetime
 
 load_dotenv()
-from src.init_services import db, dropbox_svc, drive_svc
 
-# Inicialización de servicios
+# Inicialización de servicios (Asegurando que usen las variables de entorno)
+db = DatabaseHandler()
 dropbox_svc = DropboxService(
     app_key=os.getenv("DROPBOX_APP_KEY"),
     app_secret=os.getenv("DROPBOX_APP_SECRET"),
@@ -19,64 +21,97 @@ dropbox_svc = DropboxService(
 )
 drive_svc = GoogleDriveService()
 
-async def procesar_archivos_viejos():
+def limpiar_y_recortar_texto(texto, max_chars=15000):
+    if not texto: return ""
+    if len(texto) > max_chars:
+        print(f"✂️ Fragmentando texto largo para embedding ({len(texto)} chars)...")
+        return texto[:max_chars]
+    return texto
+
+async def procesar_archivos_viejos(progreso_callback=None):
     """
-    Escanea Dropbox y Drive, compara con Supabase e indexa lo faltante.
+    Escanea Dropbox y Drive, compara con la DB e indexa lo faltante.
     """
-    print("🔍 Iniciando escaneo global de nubes...")
+    if progreso_callback: await progreso_callback("Iniciando escaneo global de nubes...")
+    
     reporte = {"nuevos": 0, "errores": 0}
     
+    # Asegurar carpeta de descargas
+    if not os.path.exists("descargas"):
+        os.makedirs("descargas")
+
     # 1. Escaneo de Dropbox
-    print("📦 Escaneando Dropbox...")
-    dbx_files = await dropbox_svc.list_files("")
-    for name in dbx_files:
-        await _indexar_si_falta(name, 'dropbox', reporte)
+    if progreso_callback: await progreso_callback("Escaneando archivos en Dropbox...")
+    try:
+        # Listamos archivos (list_files debe devolver metadatos completos si es posible)
+        dbx_files = await dropbox_svc.list_files("")
+        for file_item in dbx_files:
+            # Si el service devuelve solo nombres (strings), procesamos. 
+            # Si devuelve objetos, filtramos carpetas aquí.
+            name = file_item if isinstance(file_item, str) else file_item.get('name')
+            await _indexar_si_falta(name, 'dropbox', reporte, progreso_callback)
+    except Exception as e:
+        if progreso_callback: await progreso_callback(f"Error Dropbox: {str(e)}")
 
     # 2. Escaneo de Google Drive
-    print("📂 Escaneando Google Drive...")
+    if progreso_callback: await progreso_callback("Escaneando archivos en Google Drive...")
     try:
         drive_files = await drive_svc.list_files(limit=50)
         for name in drive_files:
-            await _indexar_si_falta(name, 'drive', reporte)
+            await _indexar_si_falta(name, 'drive', reporte, progreso_callback)
     except Exception as e:
-        print(f"❌ Error en Drive Indexer: {e}")
+        if progreso_callback: await progreso_callback(f"Error Drive: {str(e)}")
 
-    return f"Procesados: {reporte['nuevos']} nuevos archivos. Errores: {reporte['errores']}."
+    final_msg = f"COMPLETADO: {reporte['nuevos']} nuevos, {reporte['errores']} errores."
+    if progreso_callback: await progreso_callback(final_msg)
+    return final_msg
 
-async def _indexar_si_falta(name, servicio, reporte):
-    """Lógica interna para procesar un archivo individual si no está en DB"""
-    # Verificamos si ya existe en Supabase
+async def _indexar_si_falta(name, servicio, reporte, progreso_callback=None):
+    """Lógica para procesar un archivo individual"""
+    
+    # IMPORTANTE: Filtrar nombres vacíos o tipos de sistema
+    if not name or name in [".", "..", "None", "General", "Imágenes"]:
+        return
+
+    # Verificamos si ya existe en la base de datos
     existente = db.get_file_by_name_and_service(name, servicio)
     
-    # Si existe y ya tiene embedding, saltamos
     if existente and existente.get('embedding'):
         return
 
-    print(f"⚙️ Procesando: {name} ({servicio})...")
+    if progreso_callback: await progreso_callback(f"Procesando: {name} ({servicio})...")
+    
     local_path = os.path.join("descargas", name)
     
     try:
-        # 1. Descarga según el servicio
         success = False
         url = None
+        
+        # 1. Descarga y validación de NO ser carpeta
         if servicio == 'dropbox':
+            # Verificamos que no sea una carpeta antes de descargar
+            # (Asumiendo que list_files filtró, pero re-aseguramos)
             success = await dropbox_svc.download_file(f"/{name}", local_path)
-            url = await dropbox_svc.get_link(f"/{name}")
+            if success:
+                url = await dropbox_svc.get_link(f"/{name}")
         elif servicio == 'drive':
             success = await drive_svc.download_file_by_name(name, local_path)
-            url = await drive_svc.get_link_by_name(name)
+            if success:
+                url = await drive_svc.get_link_by_name(name)
 
         if not success or not os.path.exists(local_path):
-            raise Exception("No se pudo descargar el archivo.")
+            # Si falla porque es una carpeta, DropboxService debería devolver False
+            raise Exception("No se pudo descargar o es un directorio.")
 
-        # 2. Análisis IA
+        # 2. Análisis IA (OCR, Whisper, etc.)
         texto = await AIHandler.extract_text(local_path)
-        # Recortamos texto para evitar errores de tokens (usando tu función)
         texto_limpio = limpiar_y_recortar_texto(texto)
-        vector = await AIHandler.get_embedding(texto_limpio) if texto_limpio else None
+        
+        vector = None
+        if texto_limpio:
+            vector = await AIHandler.get_embedding(texto_limpio)
 
-        # 3. Registro en Supabase
-        # Si ya existe pero no tenía embedding, lo actualizamos, si no, creamos.
+        # 3. Registro o Actualización en DB
         db.register_file(
             telegram_id="INDEXER_SYNC",
             name=name,
@@ -88,34 +123,56 @@ async def _indexar_si_falta(name, servicio, reporte):
         )
         
         reporte['nuevos'] += 1
-        print(f"✅ Indexado: {name}")
+        if progreso_callback: await progreso_callback(f"✅ Indexado con éxito: {name}")
 
     except Exception as e:
-        print(f"❌ Error indexando {name}: {e}")
-        reporte['errores'] += 1
+        error_msg = str(e)
+        # Filtrar el error común de carpetas para no saturar el log
+        if "not_file" in error_msg or "is a directory" in error_msg:
+            if progreso_callback: await progreso_callback(f"⏩ Saltando carpeta: {name}")
+        else:
+            print(f"❌ Error indexando {name}: {e}")
+            if progreso_callback: await progreso_callback(f"❌ Error en {name}: {error_msg}")
+            reporte['errores'] += 1
     finally:
         if os.path.exists(local_path):
-            os.remove(local_path)
+            try: os.remove(local_path)
+            except: pass
 
-def limpiar_y_recortar_texto(texto, max_chars=15000):
-    if not texto: return ""
-    return texto[:max_chars] if len(texto) > max_chars else texto
+# --- COMPATIBILIDAD CON DASHBOARD (SSE) ---
 
-# --- COMPATIBILIDAD CON WEB_ADMIN (FLASK) ---
-
-def ejecutar_indexacion_completa():
-    """Llamada por el botón del Dashboard. Usa un loop nuevo para no chocar con Flask."""
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        resultado = loop.run_until_complete(procesar_archivos_viejos())
-        loop.close()
-        return resultado
-    except Exception as e:
-        return f"Error: {str(e)}"
+async def ejecutar_indexacion_completa():
+    """Versión asíncrona principal para el hilo."""
+    return await procesar_archivos_viejos()
 
 async def ejecutar_indexacion_paso_a_paso():
-    """Generador para la barra de progreso"""
-    yield "data: 20\n\n"
-    res = ejecutar_indexacion_completa()
-    yield f"data: 100\n\n"
+    """
+    Generador asíncrono que envía datos al EventSource del Dashboard.
+    Envía porcentajes y mensajes de texto.
+    """
+    yield "data: 5\n\n"
+    yield "data: 🔍 Iniciando sincronización de nubes...\n\n"
+
+    queue = asyncio.Queue()
+
+    # Función interna para capturar logs del indexador y meterlos en la cola
+    async def callback_progreso(msg):
+        await queue.put(msg)
+
+    # Lanzamos la indexación en una tarea separada
+    task = asyncio.create_task(procesar_archivos_viejos(callback_progreso))
+    
+    # Mientras la tarea no termine, sacamos mensajes de la cola y los enviamos al navegador
+    while not task.done() or not queue.empty():
+        try:
+            # Esperamos un mensaje con un timeout pequeño para no bloquear
+            msg = await asyncio.wait_for(queue.get(), timeout=1.0)
+            yield f"data: {msg}\n\n"
+            # Enviamos un progreso ficticio intermedio para mover la barra
+            yield f"data: 50\n\n"
+        except asyncio.TimeoutError:
+            continue
+
+    resultado_final = await task
+    yield f"data: {resultado_final}\n\n"
+    yield "data: 100\n\n"

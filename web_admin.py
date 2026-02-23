@@ -1,9 +1,11 @@
 import os
 import threading
 import asyncio
-import csv
 from io import StringIO
 from datetime import datetime
+
+from flask import Response, stream_with_context
+
 
 from flask import Flask, render_template, redirect, url_for, request, flash, Response
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
@@ -146,28 +148,23 @@ def reset_errors():
         flash(f"Error al resetear: {e}", "error")
     return redirect(url_for('dashboard'))
 
-# --- INDEXADOR IA ---
-import asyncio
-import threading
-from flask import Response, stream_with_context
-
-# ... tus otras importaciones ...
-
 @app.route('/run-indexer', methods=['POST'])
 @login_required
 def run_indexer_endpoint():
-    try:
-        from indexador import ejecutar_indexacion_completa
-        
-        def start_async_logic():
-            # Esta es la forma más robusta de correr async en un hilo secundario
-            asyncio.run(ejecutar_indexacion_completa())
+    from indexador import ejecutar_indexacion_completa
+    
+    def thread_wrapper():
+        # Creamos un nuevo evento de loop para este hilo específico
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(ejecutar_indexacion_completa())
+        finally:
+            loop.close()
 
-        thread = threading.Thread(target=start_async_logic, daemon=True)
-        thread.start()
-        return {"status": "success"}, 200
-    except Exception as e:
-        return {"status": "error", "message": str(e)}, 500
+    thread = threading.Thread(target=thread_wrapper, daemon=True)
+    thread.start()
+    return {"status": "success"}, 200
 
 @app.route('/progress-indexer')
 @login_required
