@@ -1,9 +1,8 @@
-import fitz  # PyMuPDF para PDFs
-import docx  # para archivos .docx
+import fitz
+import docx
 from PIL import Image
 import os
 import numpy as np 
-import pandas as pd
 import base64
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -104,46 +103,33 @@ class AIHandler:
                 text = await AIHandler.transcribe_audio(file_path)
             
             elif ext == 'pdf':
-                doc = fitz.open(file_path)
-                text = " ".join([page.get_text() for page in doc])
-                # SI EL PDF ESTÁ VACÍO (ES ESCANEADO), USAR VISIÓN EN LA PRIMERA PÁGINA
-                if len(text.strip()) < 10 and len(doc) > 0:
-                    page = doc.load_page(0)
-                    pix = page.get_pixmap()
-                    img_path = file_path + "_temp.jpg"
-                    pix.save(img_path)
-                    text = await AIHandler.analyze_image_vision(img_path)
-                    if os.path.exists(img_path): os.remove(img_path)
+                # Ya no importamos fitz aquí, ya está arriba
+                with fitz.open(file_path) as doc:
+                    text = " ".join([page.get_text() for page in doc])
+                
+                # Si es un PDF escaneado (sin texto), intentar OCR con Visión
+                if len(text.strip()) < 10:
+                    print("pdf parece escaneado, usando Visión...")
+                    with fitz.open(file_path) as doc:
+                        if len(doc) > 0:
+                            page = doc.load_page(0)
+                            pix = page.get_pixmap()
+                            temp_img = f"{file_path}_ocr.jpg"
+                            pix.save(temp_img)
+                            text = await AIHandler.analyze_image_vision(temp_img)
+                            if os.path.exists(temp_img): os.remove(temp_img)
+
+            elif ext == 'docx':
+                doc = docx.Document(file_path)
+                text = " ".join([para.text for para in doc.paragraphs])
             
             elif ext == 'txt':
-                with open(file_path, 'r', encoding='utf-8') as f:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     text = f.read()
-                    
-        except Exception as e:
-            print(f"❌ IA Error extrayendo de {ext}: {e}")
-        
-        final_text = text.replace('\x00', '').strip()
-        return final_text
-        if not file_path or not os.path.exists(file_path):
-            return ""
 
-        ext = file_path.lower().split('.')[-1]
-        text = ""
-        try:
-            if ext in ['jpg', 'jpeg', 'png', 'webp']:
-                text = await AIHandler.analyze_image_vision(file_path)
-            elif ext in ['ogg', 'mp3', 'wav', 'mp4', 'm4a']:
-                # Aquí es donde se procesan audios y notas de video
-                text = await AIHandler.transcribe_audio(file_path)
-            elif ext == 'pdf':
-                import fitz
-                doc = fitz.open(file_path)
-                text = " ".join([page.get_text() for page in doc])
-            # ... resto de extensiones
         except Exception as e:
-            print(f"❌ IA Error extrayendo de {ext}: {e}")
+            # Muy importante: imprimir el error real para debug
+            print(f"❌ Error real en extract_text ({ext}): {str(e)}")
+            text = f"Error al extraer texto de {ext}"
         
-        # Limpieza de caracteres NUL que rompen Postgres
-        final_text = text.replace('\x00', '').strip()
-        print(f"🤖 IA extrajo ({len(final_text)} chars): {final_text[:50]}...")
-        return final_text
+        return text.replace('\x00', '').strip()

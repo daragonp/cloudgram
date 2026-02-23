@@ -10,9 +10,10 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, CallbackQueryHandler
 from geopy.geocoders import Nominatim
 import geopy.geocoders
+from main import db, dropbox_svc, drive_svc
+from src.utils.ai_handler import AIHandler
 
 from src.init_services import db, dropbox_svc, drive_svc, openai_client
-from src.utils.ai_handler import AIHandler
 
 # Configuración SSL para mi MacBook
 ctx = ssl.create_default_context(cafile=certifi.where())
@@ -50,18 +51,11 @@ async def buscar_ia_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await espera_msg.edit_text("❌ Error al procesar la búsqueda con IA.")
 
 async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from main import db, dropbox_svc, drive_svc
-    from src.utils.ai_handler import AIHandler
-    from datetime import datetime
-    import os
-    import time
-    import asyncio
-    import random
 
     user_data = context.user_data
     file_id, file_name, file_type = None, None, "documento"
     is_location, is_voice = False, False
-    texto_extraido = None # Inicializamos para evitar errores
+    texto_extraido = "" 
     
     ts_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     ts_unix = int(time.time())
@@ -94,13 +88,12 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_location = True
         lat, lon = update.message.location.latitude, update.message.location.longitude
         try:
-            # Intentamos obtener dirección legible
+            from src.handlers.message_handlers import geolocator
             location = geolocator.reverse(f"{lat}, {lon}", timeout=10)
             direccion = location.address if location else f"{lat}, {lon}"
         except: 
             direccion = f"{lat}, {lon}"
         
-        # PREPARAMOS EL TEXTO PARA LA IA Y LA DB (Soluciona el content_text vacío)
         texto_extraido = (f"📍 Ubicación enviada.\n"
                          f"Dirección: {direccion}\n"
                          f"Coordenadas: {lat}, {lon}\n"
@@ -108,9 +101,9 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         file_name = f"Ubicacion_{ts_str}.txt"
         local_path = os.path.join("descargas", file_name)
+        if not os.path.exists("descargas"): os.makedirs("descargas")
         with open(local_path, "w", encoding="utf-8") as f:
             f.write(texto_extraido)
-        
         file_id = f"LOC_{ts_unix}"
         file_type = "📍 Ubicación"
 
@@ -136,38 +129,44 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                       reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
         return
 
-    # 3. ¿HAY CARPETA ACTIVA? (Subida directa y proceso IA completo)
+    # 3. ¿HAY CARPETA ACTIVA? (Subida directa y proceso IA)
     folder_id = user_data.get('current_folder_id')
     cloud_parent = user_data.get('current_cloud_id')
 
     if folder_id:
-        msg = await update.message.reply_text(f"📥 Procesando para *{user_data.get('current_path_name')}*...", parse_mode=ParseMode.MARKDOWN)
+        msg = await update.message.reply_text(f"📥 Procesando para *{user_data.get('current_path_name', 'Nube')}*...", parse_mode=ParseMode.MARKDOWN)
+        local_path = os.path.join("descargas", file_name)
+        if not os.path.exists("descargas"): os.makedirs("descargas")
+        
         try:
-            local_path = os.path.join("descargas", file_name)
-            
-            # Descarga si no es ubicación (la ubicación ya se creó arriba)
+            # A. Descarga
             if not is_location:
                 tg_file = await context.bot.get_file(file_id)
                 await tg_file.download_to_drive(local_path)
-                # Extracción de texto mediante AIHandler
-                texto_extraido = await AIHandler.extract_text(local_path)
-
-            # Generación de Embedding (Crucial para buscar_ia)
-            vector = await AIHandler.get_embedding(texto_extraido) if (texto_extraido and texto_extraido.strip()) else None
             
-            # Decidir servicio según el folder_id
+            # B. IA (Aislada para que errores de fitz/OpenAI no detengan la subida)
+            vector = None
+            try:
+                if not is_location:
+                    texto_extraido = await AIHandler.extract_text(local_path)
+                
+                if texto_extraido and texto_extraido.strip():
+                    vector = await AIHandler.get_embedding(texto_extraido)
+            except Exception as ai_err:
+                print(f"⚠️ Error en IA: {ai_err}")
+
+            # C. Subida
             svc = drive_svc if folder_id and not str(folder_id).startswith('/') else dropbox_svc
             svc_name = "drive" if svc == drive_svc else "dropbox"
             
-            # Subida a la nube
             url = await svc.upload(local_path, file_name, folder_id if svc_name == "drive" else (cloud_parent or "General"))
             
             if url:
                 if isinstance(url, tuple): url = url[0]
                 
-                # REGISTRO EN DATABASE (Soluciona telegram_id y content_text)
+                # D. Registro Database
                 db.register_file(
-                    telegram_id=update.effective_user.id, # ID numérico del usuario
+                    telegram_id=update.effective_user.id,
                     name=file_name,
                     f_type=file_name.split('.')[-1],
                     cloud_url=url,
@@ -177,16 +176,17 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     folder_id=folder_id
                 )
                 await msg.edit_text(f"✅ *Guardado:* `{file_name}`\n🔗 [Ver en la nube]({url})", parse_mode=ParseMode.MARKDOWN)
-            
-            # Limpieza
-            if os.path.exists(local_path): os.remove(local_path)
-            
+            else:
+                await msg.edit_text("❌ Error al subir a la nube.")
+
         except Exception as e:
-            print(f"Error crítico en handle_any_file: {e}")
-            await msg.edit_text(f"❌ Error: {str(e)}")
-    
+            print(f"Error crítico: {e}")
+            await msg.edit_text(f"❌ Error crítico: {str(e)}")
+        finally:
+            if os.path.exists(local_path): 
+                os.remove(local_path)
     else:
-        # 4. MODO MANUAL (Cola de archivos y selección de nube)
+        # 4. MODO MANUAL
         if 'file_queue' not in user_data: user_data['file_queue'] = []
         user_data['file_queue'].append({'id': file_id, 'name': file_name, 'type': file_type})
 
