@@ -187,28 +187,46 @@ class DatabaseHandler:
                 """, (name, service, cloud_folder_id, parent_id))
                 return cur.fetchone()['id']
 
+    from psycopg2.extras import RealDictCursor # Asegúrate de tener esta importación arriba
+
     def get_folder_contents(self, parent_id=None):
-        """Retorna subcarpetas y archivos de una carpeta específica"""
+        """Retorna subcarpetas y archivos usando diccionarios"""
         with self._connect() as conn:
-            with conn.cursor() as cur:
-                # Traer carpetas
-                cur.execute("SELECT id, name, 'folder' as type FROM folders WHERE parent_id IS %s", (parent_id,))
+            # El cursor_factory es la clave para que item['type'] funcione
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # 1. Obtener Carpetas
+                if parent_id is None or parent_id == "root":
+                    cur.execute("SELECT id, name, 'folder' as type FROM folders WHERE parent_id IS NULL")
+                else:
+                    cur.execute("SELECT id, name, 'folder' as type FROM folders WHERE parent_id = %s", (parent_id,))
                 subfolders = cur.fetchall()
                 
-                # Traer archivos
-                cur.execute("SELECT id, name, 'file' as type FROM files WHERE folder_id IS %s", (parent_id,))
+                # 2. Obtener Archivos
+                if parent_id is None or parent_id == "root":
+                    cur.execute("SELECT id, name, 'file' as type FROM files WHERE folder_id IS NULL")
+                else:
+                    cur.execute("SELECT id, name, 'file' as type FROM files WHERE folder_id = %s", (parent_id,))
                 files = cur.fetchall()
                 
                 return subfolders + files
-            
-    def get_parent_folder(self, folder_id):
-        """Obtiene la carpeta padre de una carpeta dada para navegar hacia atrás"""
+
+    def get_folder_by_id(self, folder_id):
+        """Obtiene datos de una carpeta específica"""
+        if not folder_id or folder_id == "root": return None
         with self._connect() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM folders WHERE id = %s", (folder_id,))
+                return cur.fetchone()
+
+    def get_parent_folder(self, folder_id):
+        """Obtiene la carpeta padre para el botón 'Volver atrás'"""
+        if not folder_id or folder_id == "root": return None
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     SELECT p.id, p.name 
                     FROM folders c 
-                    JOIN folders p ON c.parent_id = p.id 
+                    LEFT JOIN folders p ON c.parent_id = p.id 
                     WHERE c.id = %s
                 """, (folder_id,))
                 return cur.fetchone()
