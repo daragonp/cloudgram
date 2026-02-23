@@ -99,6 +99,39 @@ class AIHandler:
         try:
             if ext in ['jpg', 'jpeg', 'png', 'webp']:
                 text = await AIHandler.analyze_image_vision(file_path)
+            
+            elif ext in ['ogg', 'mp3', 'wav', 'mp4', 'm4a']:
+                text = await AIHandler.transcribe_audio(file_path)
+            
+            elif ext == 'pdf':
+                doc = fitz.open(file_path)
+                text = " ".join([page.get_text() for page in doc])
+                # SI EL PDF ESTÁ VACÍO (ES ESCANEADO), USAR VISIÓN EN LA PRIMERA PÁGINA
+                if len(text.strip()) < 10 and len(doc) > 0:
+                    page = doc.load_page(0)
+                    pix = page.get_pixmap()
+                    img_path = file_path + "_temp.jpg"
+                    pix.save(img_path)
+                    text = await AIHandler.analyze_image_vision(img_path)
+                    if os.path.exists(img_path): os.remove(img_path)
+            
+            elif ext == 'txt':
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    text = f.read()
+                    
+        except Exception as e:
+            print(f"❌ IA Error extrayendo de {ext}: {e}")
+        
+        final_text = text.replace('\x00', '').strip()
+        return final_text
+        if not file_path or not os.path.exists(file_path):
+            return ""
+
+        ext = file_path.lower().split('.')[-1]
+        text = ""
+        try:
+            if ext in ['jpg', 'jpeg', 'png', 'webp']:
+                text = await AIHandler.analyze_image_vision(file_path)
             elif ext in ['ogg', 'mp3', 'wav', 'mp4', 'm4a']:
                 # Aquí es donde se procesan audios y notas de video
                 text = await AIHandler.transcribe_audio(file_path)
