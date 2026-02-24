@@ -6,7 +6,7 @@ from flask import Flask, render_template, redirect, url_for, request, flash, Res
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 
-# Núcleo del proyecto
+# --- NÚCLEO DEL PROYECTO ---
 from src.database.db_handler import DatabaseHandler
 from indexador import ejecutar_indexacion_completa, ejecutar_indexacion_paso_a_paso
 from src.services.dropbox_service import DropboxService
@@ -18,14 +18,10 @@ db = DatabaseHandler()
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev_key_only")
 
-# -------------------------------
-# CONFIGURACIÓN LOGIN
-# -------------------------------
-
+# --- CONFIGURACIÓN LOGIN ---
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
-
 
 class User(UserMixin):
     def __init__(self, id, email, password_hash, nombre=None):
@@ -33,7 +29,6 @@ class User(UserMixin):
         self.email = email
         self.password_hash = password_hash
         self.nombre = nombre if nombre else "Administrador"
-
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -47,8 +42,7 @@ def load_user(user_id):
         )
     return None
 
-
-# Funciones útiles en plantillas
+# Registro de utilidades para Jinja2
 @app.context_processor
 def inject_utils():
     return dict(
@@ -56,17 +50,13 @@ def inject_utils():
         hasattr=hasattr
     )
 
-
-# -------------------------------
-# AUTENTICACIÓN
-# -------------------------------
+# --- RUTAS DE AUTENTICACIÓN ---
 
 @app.route('/')
 def index():
     if current_user.is_authenticated:
         return redirect(url_for('dashboard'))
     return render_template('index.html')
-
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -90,9 +80,7 @@ def login():
             return redirect(url_for('dashboard'))
 
         flash('Credenciales inválidas.', 'error')
-
     return render_template('login.html')
-
 
 @app.route('/logout')
 @login_required
@@ -101,10 +89,7 @@ def logout():
     flash('Sesión cerrada.', 'info')
     return redirect(url_for('login'))
 
-
-# -------------------------------
-# DASHBOARD
-# -------------------------------
+# --- PANEL PRINCIPAL (DASHBOARD) ---
 
 @app.route('/dashboard')
 @login_required
@@ -112,11 +97,11 @@ def dashboard():
     try:
         with db._connect() as conn:
             with conn.cursor() as cur:
-                # Total archivos
+                # 1. Total archivos
                 cur.execute("SELECT COUNT(*) FROM files")
                 total_db = cur.fetchone()[0]
 
-                # Con embeddings válidos
+                # 2. Indexados IA (Embeddings válidos)
                 cur.execute("""
                     SELECT COUNT(*) FROM files 
                     WHERE embedding IS NOT NULL
@@ -124,7 +109,7 @@ def dashboard():
                 """)
                 count_ia = cur.fetchone()[0]
 
-                # Pendientes reales
+                # 3. Pendientes reales
                 cur.execute("""
                     SELECT COUNT(*) FROM files 
                     WHERE embedding IS NULL 
@@ -132,27 +117,23 @@ def dashboard():
                 """)
                 count_pending = cur.fetchone()[0]
 
-                # Multimedia
+                # 4. Multimedia
                 cur.execute("""
                     SELECT COUNT(*) FROM files
                     WHERE type IN ('🖼️ Foto', '🎥 Video', 'jpg', 'png', 'jpeg')
-                    OR name ILIKE '%.jpg'
-                    OR name ILIKE '%.png'
-                    OR name ILIKE '%.jpeg'
+                    OR name ILIKE '%.jpg' OR name ILIKE '%.png' OR name ILIKE '%.jpeg'
                 """)
                 count_fotos = cur.fetchone()[0]
 
-        # 🔎 Estados reales
+        # Diagnóstico de estados
         db_status = db.test_connection()
-
-        # Drive status (simple prueba)
         try:
+            # Verificamos si el token de Drive es funcional o renovable
             drive_status = refresh_google_token()
         except:
             drive_status = False
-
-        # Dropbox status (puedes hacer método test_connection si quieres)
-        dropbox_status = True  # placeholder real si tienes método
+        
+        dropbox_status = True  # Status base para Dropbox
 
         return render_template(
             "dashboard.html",
@@ -166,18 +147,12 @@ def dashboard():
         )
 
     except Exception as e:
-        print(f"Error dashboard: {e}")
+        print(f"❌ Error dashboard: {e}")
         return render_template("dashboard.html",
-                               total_total=0,
-                               total_ia=0,
-                               total_fotos=0,
-                               total_pending=0,
-                               db_status=False,
-                               drive_status=False,
-                               dropbox_status=False)
-# -------------------------------
-# GESTIÓN DE ARCHIVOS
-# -------------------------------
+                               total_total=0, total_ia=0, total_fotos=0, total_pending=0,
+                               db_status=False, drive_status=False, dropbox_status=False)
+
+# --- GESTIÓN DE ARCHIVOS ---
 
 @app.route('/delete/<int:file_id>')
 @login_required
@@ -192,39 +167,36 @@ def delete_file(file_id):
         service = file_info['service']
         success_cloud = False
 
+        # Manejo de llamadas asíncronas para servicios Cloud
         try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             if service == 'dropbox':
-                success_cloud = asyncio.run(
-                    DropboxService.delete_file(f"/{name}")
-                )
+                success_cloud = loop.run_until_complete(DropboxService.delete_file(f"/{name}"))
             elif service == 'drive':
-                success_cloud = asyncio.run(
-                    GoogleDriveService.delete_file(name)
-                )
-        except Exception:
+                success_cloud = loop.run_until_complete(GoogleDriveService.delete_file(name))
+            loop.close()
+        except Exception as e:
+            print(f"⚠️ Error Cloud Delete: {e}")
             success_cloud = False
 
         db.delete_file_by_id(file_id)
-
         msg_cloud = "y de la nube ✅" if success_cloud else "(solo de la base de datos ⚠️)"
         flash(f"Archivo `{name}` eliminado {msg_cloud}.", "success")
 
     except Exception as e:
         flash(f"❌ Error al eliminar: {e}", "error")
-
     return redirect(url_for('dashboard'))
-
 
 @app.route('/reset-errors', methods=['POST'])
 @login_required
 def reset_errors():
     try:
         db.reset_failed_embeddings()
-        flash("♻️ Archivos marcados con error han sido reseteados para re-indexación.", "info")
+        flash("♻️ Archivos marcados con error reseteados correctamente.", "info")
     except Exception as e:
         flash(f"Error al resetear: {e}", "error")
     return redirect(url_for('dashboard'))
-
 
 @app.route('/run-indexer', methods=['POST'])
 @login_required
@@ -239,7 +211,6 @@ def run_indexer_endpoint():
 
     threading.Thread(target=thread_wrapper, daemon=True).start()
     return {"status": "success"}, 200
-
 
 @app.route('/progress-indexer')
 @login_required
@@ -256,9 +227,7 @@ def progress_indexer():
                     break
         finally:
             loop.close()
-
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
-
 
 @app.route('/download-db')
 @login_required
@@ -268,19 +237,11 @@ def download_db():
         return Response(
             sql_content,
             mimetype="application/sql",
-            headers={
-                "Content-disposition":
-                f"attachment; filename=backup_{datetime.now().strftime('%Y%m%d')}.sql"
-            }
+            headers={"Content-disposition": f"attachment; filename=backup_{datetime.now().strftime('%Y%m%d')}.sql"}
         )
     except Exception as e:
-        flash(f"Error: {e}", "error")
+        flash(f"Error al exportar: {e}", "error")
         return redirect(url_for('dashboard'))
-
-
-# -------------------------------
-# PERFIL
-# -------------------------------
 
 @app.route('/perfil', methods=['GET', 'POST'])
 @login_required
@@ -291,23 +252,18 @@ def perfil():
 
         if nombre:
             db.update_user_name(current_user.id, nombre)
-            current_user.nombre = nombre  # actualizar sesión
+            current_user.nombre = nombre
 
         if nueva_pass and len(nueva_pass) >= 6:
             hash_p = generate_password_hash(nueva_pass, method='scrypt')
             db.update_user_password(current_user.id, hash_p)
-            flash("Contraseña actualizada con éxito.", "success")
+            flash("Contraseña actualizada.", "success")
 
         flash("Perfil actualizado correctamente.", "success")
         return redirect(url_for('perfil'))
 
     user_data = db.get_user_by_id(current_user.id)
     return render_template('profile.html', user=user_data)
-
-
-# -------------------------------
-# UTILIDADES
-# -------------------------------
 
 @app.route('/status-check')
 @login_required
@@ -320,16 +276,14 @@ def status_check():
         flash(f"Error de diagnóstico: {e}", "error")
     return redirect(url_for('dashboard'))
 
-
 @app.route('/fix-drive-token', methods=['POST'])
 @login_required
 def fix_drive_token():
     if refresh_google_token():
         flash("Conexión con Google Drive restaurada correctamente.", "success")
     else:
-        flash("No se pudo restaurar la conexión. Verifica las credenciales.", "error")
+        flash("No se pudo restaurar la conexión. Revisa tus variables en Railway.", "error")
     return redirect(url_for('dashboard'))
-
 
 @app.route('/archivos-errores')
 @login_required
@@ -345,17 +299,10 @@ def archivos_errores():
                     ORDER BY created_at DESC
                 """)
                 rows = cur.fetchall()
-
         return render_template('archivos_errores.html', files=rows)
-
     except Exception as e:
-        flash(f"Error al cargar lista de errores: {e}", "error")
+        flash(f"Error al cargar lista: {e}", "error")
         return redirect(url_for('dashboard'))
-
-
-# -------------------------------
-# RUN
-# -------------------------------
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5050))
