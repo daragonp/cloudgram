@@ -5,6 +5,7 @@ from datetime import datetime
 from flask import Flask, render_template, redirect, url_for, request, flash, Response, stream_with_context
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
+from flask_wtf.csrf import CSRFProtect
 
 # --- NÚCLEO DEL PROYECTO ---
 from src.database.db_handler import DatabaseHandler
@@ -17,6 +18,7 @@ from refresh_drive_token import refresh_google_token
 db = DatabaseHandler()
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev_key_only")
+csrf = CSRFProtect(app)
 
 # --- CONFIGURACIÓN LOGIN ---
 login_manager = LoginManager()
@@ -126,7 +128,7 @@ def dashboard():
                 count_fotos = cur.fetchone()[0]
 
         # Diagnóstico de estados
-        db_status = db.test_connection()
+        db_status = db.check_connection()
         try:
             # Verificamos si el token de Drive es funcional o renovable
             drive_status = refresh_google_token()
@@ -269,7 +271,7 @@ def perfil():
 @login_required
 def status_check():
     try:
-        db_ok = db.test_connection()
+        db_ok = db.check_connection()
         msg = "Sistema Operativo ✅" if db_ok else "Error de conexión a DB ❌"
         flash(msg, "info" if db_ok else "error")
     except Exception as e:
