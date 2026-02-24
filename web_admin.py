@@ -19,7 +19,6 @@ db = DatabaseHandler()
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev_key_only")
 csrf = CSRFProtect(app)
-
 # --- CONFIGURACIÓN LOGIN ---
 login_manager = LoginManager()
 login_manager.init_app(app)
