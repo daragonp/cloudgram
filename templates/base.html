@@ -21,18 +21,29 @@
 </head>
 <body>
 
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark border-bottom border-secondary">
     <div class="container">
-        <a class="navbar-brand" href="{{ url_for('index') }}">☁️ CloudGram</a>
+        <a class="navbar-brand text-cyan fw-bold" href="{{ url_for('index') }}">☁️ CloudGram</a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
             <span class="navbar-toggler-icon"></span>
         </button>
         <div class="collapse navbar-collapse" id="navbarNav">
-            <ul class="navbar-nav ms-auto">
+            <ul class="navbar-nav ms-auto align-items-center">
                 <li class="nav-item"><a class="nav-link" href="{{ url_for('index') }}">Inicio</a></li>
+                
                 {% if current_user.is_authenticated %}
                     <li class="nav-item"><a class="nav-link text-info" href="{{ url_for('dashboard') }}">Dashboard</a></li>
-                    <li class="nav-item"><a class="nav-link" href="{{ url_for('logout') }}">Cerrar Sesión</a></li>
+                    
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle text-white fw-bold" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            👤 {{ current_user.nombre if hasattr(current_user, 'nombre') else 'Mi Cuenta' }}
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-dark dropdown-menu-end shadow-lg border-secondary">
+                            <li><a class="dropdown-item" href="{{ url_for('perfil') }}">⚙️ Ajustes de Perfil</a></li>
+                            <li><hr class="dropdown-divider border-secondary"></li>
+                            <li><a class="dropdown-item text-danger" href="{{ url_for('logout') }}">🚪 Cerrar Sesión</a></li>
+                        </ul>
+                    </li>
                 {% else %}
                     <li class="nav-item"><a class="btn btn-outline-primary ms-lg-3" href="{{ url_for('login') }}">Admin Login</a></li>
                 {% endif %}
@@ -40,7 +51,6 @@
         </div>
     </div>
 </nav>
-
 <div class="container mt-4">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}

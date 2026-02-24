@@ -23,6 +23,7 @@ from telegram.ext import (
     ContextTypes
 )
 from telegram.constants import ParseMode
+from telegram.error import NetworkError
 
 # 2. IMPORTACIÓN DE SERVICIOS INICIALIZADOS
 # Asegúrate de que este archivo exista en src/init_services.py
@@ -597,6 +598,15 @@ async def cambiar_directorio(update, context):
         "Ahora, cualquier archivo que envíes se guardará aquí.",
         parse_mode='Markdown'
     )
+
+
+async def error_handler(update, context):
+    """Maneja errores de red de forma silenciosa si son temporales."""
+    if isinstance(context.error, NetworkError):
+        # Solo logueamos una advertencia corta en lugar de todo el traceback
+        print(f"⚠️ Error de red temporal en Telegram: {context.error}")
+    else:
+        print(f"❌ Error crítico: {context.error}")
 
 
 

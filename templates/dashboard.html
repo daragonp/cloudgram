@@ -24,40 +24,35 @@
 
     <div class="row g-4 mb-5">
         <div class="col-md-3">
-            <div class="card p-3 shadow-sm h-100">
+            <div class="card p-3 shadow-sm h-100 bg-dark border-secondary">
                 <h6 class="text-muted small text-uppercase">Total Archivos</h6>
-                <h2 class="fw-bold mb-0">{{ total_total }}</h2>
+                <h2 class="fw-bold mb-0 text-white">{{ total_total }}</h2>
             </div>
         </div>
         
         <div class="col-md-3">
-            <div class="card p-3 shadow-sm h-100 border-info">
+            <div class="card p-3 shadow-sm h-100 border-info bg-dark">
                 <h6 class="text-cyan small text-uppercase">🧠 Indexados IA</h6>
                 <h2 class="fw-bold mb-0 text-cyan">{{ total_ia }}</h2>
                 <div class="progress mt-2" style="height: 5px; background-color: #0d1117;">
-                    <div class="progress-bar bg-info progress-dynamic"
-                         role="progressbar"
-                         data-progress="{{ porcentaje }}"
-                         aria-valuenow="{{ porcentaje }}"
-                         aria-valuemin="0"
-                         aria-valuemax="100">
-                    </div>
+                    <div class="progress-bar bg-info progress-dynamic" 
+                         data-progress="{{ porcentaje }}"></div>
                 </div>
-                <small class="text-muted mt-1 d-block text-end">{{ porcentaje }}% completado</small>
+                <small class="text-muted mt-1 d-block text-end">{{ porcentaje }}%</small>
             </div>
         </div>
 
         <div class="col-md-3">
-            <div class="card p-3 shadow-sm h-100">
+            <div class="card p-3 shadow-sm h-100 bg-dark border-secondary">
                 <h6 class="text-muted small text-uppercase">Multimedia (IA Visión)</h6>
-                <h2 class="fw-bold mb-0">{{ total_fotos }}</h2>
+                <h2 class="fw-bold mb-0 text-white">{{ total_fotos }}</h2>
             </div>
         </div>
 
         <div class="col-md-3">
             <a href="{{ url_for('archivos_errores') }}" class="text-decoration-none">
-                <div class="card p-3 shadow-sm h-100 border-danger bg-dark card-hover" style="cursor: pointer; transition: 0.3s;">
-                    <h6 class="text-danger small text-uppercase">Pendientes / Error</h6>
+                <div class="card p-3 shadow-sm h-100 border-danger bg-dark" style="cursor: pointer; transition: 0.3s;">
+                    <h6 class="text-danger small text-uppercase fw-bold">Pendientes / Error</h6>
                     <h2 class="fw-bold mb-0 text-danger">{{ total_total - total_ia }}</h2>
                     <small class="text-muted mt-2 d-block">Ver listado →</small>
                 </div>
@@ -67,25 +62,17 @@
 
     <div class="row g-4">
         <div class="col-md-7">
-            <div class="card h-100">
+            <div class="card h-100 bg-dark border-secondary">
                 <div class="card-body">
                     <h5 class="card-title mb-4 text-cyan">Estatus de Servicios</h5>
                     <ul class="list-group list-group-flush bg-transparent">
-                        <li class="list-group-item bg-transparent d-flex justify-content-between align-items-center border-secondary px-0">
-                            <div><strong>Base de Datos PostgreSQL</strong><br><small class="text-muted">Railway Cloud DB</small></div>
+                        <li class="list-group-item bg-transparent d-flex justify-content-between align-items-center border-secondary px-0 text-white">
+                            <div><strong>Base de Datos</strong><br><small class="text-muted">Railway PostgreSQL</small></div>
                             <span class="badge rounded-pill bg-success">ONLINE</span>
                         </li>
-                        <li class="list-group-item bg-transparent d-flex justify-content-between align-items-center border-secondary px-0">
-                            <div><strong>Google Drive API</strong><br><small class="text-muted">Service Account Access</small></div>
+                        <li class="list-group-item bg-transparent d-flex justify-content-between align-items-center border-secondary px-0 text-white">
+                            <div><strong>Google Drive API</strong><br><small class="text-muted">Token Status</small></div>
                             <span class="badge rounded-pill bg-success">CONECTADO</span>
-                        </li>
-                        <li class="list-group-item bg-transparent d-flex justify-content-between align-items-center border-secondary px-0">
-                            <div><strong>Dropbox API</strong><br><small class="text-muted">Oauth2 Flow</small></div>
-                            <span class="badge rounded-pill bg-success">CONECTADO</span>
-                        </li>
-                        <li class="list-group-item bg-transparent d-flex justify-content-between align-items-center border-secondary px-0">
-                            <div><strong>OpenAI (GPT-4o / Whisper)</strong><br><small class="text-muted">API Quota: OK</small></div>
-                            <span class="badge rounded-pill bg-success">ACTIVO</span>
                         </li>
                     </ul>
                 </div>
@@ -93,16 +80,19 @@
         </div>
 
         <div class="col-md-5">
-            <div class="card h-100">
+            <div class="card h-100 bg-dark border-secondary">
                 <div class="card-body">
-                    <h5 class="card-title mb-4 text-danger">Mantenimiento IA</h5>
-                    <form action="{{ url_for('reset_errors') }}" method="POST" class="mb-3">
-                        <button type="submit" class="btn btn-outline-danger w-100 fw-bold shadow-sm">
-                            ♻️ RESETEAR ARCHIVOS FALLIDOS
-                        </button>
-                    </form>
-                    <div class="alert alert-dark border-secondary small py-2">
-                        <strong>Nota:</strong> Intenta re-indexar los archivos con error.
+                    <h5 class="card-title mb-4 text-danger">Mantenimiento de Sistema</h5>
+                    <div class="d-grid gap-2">
+                        <form action="{{ url_for('reset_errors') }}" method="POST">
+                            <button type="submit" class="btn btn-outline-danger w-100 fw-bold">♻️ RESETEAR ARCHIVOS FALLIDOS</button>
+                        </form>
+                        <form action="{{ url_for('fix_drive_token') }}" method="POST">
+                            <button type="submit" class="btn btn-outline-warning w-100 fw-bold">🔑 REPARAR TOKEN DRIVE</button>
+                        </form>
+                    </div>
+                    <div class="alert alert-dark border-secondary small mt-3 mb-0">
+                        Usa estas opciones si notas que la IA no procesa archivos o Drive da error de permisos.
                     </div>
                 </div>
             </div>
@@ -110,18 +100,16 @@
     </div>
 </div>
 
-<div class="modal fade" id="progressModal" data-bs-backdrop="static" tabindex="-1">
+<div class="modal fade" id="progressModal" data-bs-backdrop="static">
     <div class="modal-dialog modal-lg modal-dialog-centered">
         <div class="modal-content bg-dark border-secondary shadow-lg">
-            <div class="modal-header border-secondary">
-                <h5 class="modal-title text-cyan">⚙️ Consola de Indexación IA</h5>
+            <div class="modal-header border-secondary text-cyan">
+                <h5 class="modal-title">⚙️ Consola de Indexación IA</h5>
             </div>
             <div class="modal-body p-4">
                 <div id="logConsole" class="bg-black text-success p-3 rounded mb-3 small font-monospace" 
                      style="height: 300px; overflow-y: auto; border: 1px solid #30363d; white-space: pre-wrap;">
-> [SISTEMA] Esperando inicio...<br>
                 </div>
-                
                 <div class="progress mb-2" style="height: 12px; background-color: #0d1117;">
                     <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-info" style="width: 0%;">0%</div>
                 </div>
@@ -130,53 +118,4 @@
         </div>
     </div>
 </div>
-
-<script>
-// Barra de progreso inicial
-document.addEventListener("DOMContentLoaded", function () {
-    const bar = document.querySelector(".progress-dynamic");
-    if (bar) bar.style.width = bar.getAttribute("data-progress") + "%";
-});
-
-function startIndexing() {
-    const modal = new bootstrap.Modal(document.getElementById('progressModal'));
-    const progressBar = document.getElementById('progressBar');
-    const logConsole = document.getElementById('logConsole');
-    const statusText = document.getElementById('statusText');
-    
-    modal.show();
-    logConsole.innerHTML = "<span class='text-info'>> [INFO] Iniciando hilo de ejecución...</span>\n";
-    
-    fetch("/run-indexer", { method: "POST" })
-        .then(() => {
-            const eventSource = new EventSource("/progress-indexer");
-
-            eventSource.onmessage = function(event) {
-                const data = event.data;
-                
-                if (!isNaN(data)) {
-                    // Si recibimos un número, es el progreso
-                    const p = parseInt(data);
-                    progressBar.style.width = p + "%";
-                    progressBar.innerHTML = p + "%";
-                } else {
-                    // Si recibimos texto, es un log
-                    logConsole.innerHTML += `> ${data}\n`;
-                    logConsole.scrollTop = logConsole.scrollHeight;
-                }
-                
-                if (data == "100" || data.includes("COMPLETADO")) {
-                    eventSource.close();
-                    statusText.innerHTML = "✅ Indexación finalizada con éxito.";
-                    setTimeout(() => { location.reload(); }, 2500);
-                }
-            };
-
-            eventSource.onerror = function() {
-                eventSource.close();
-                logConsole.innerHTML += "<span class='text-warning'>> [SISTEMA] Conexión finalizada o proceso en segundo plano.</span>\n";
-            };
-        });
-}
-</script>
 {% endblock %}

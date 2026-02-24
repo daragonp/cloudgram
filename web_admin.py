@@ -253,6 +253,24 @@ def archivos_errores():
         flash(f"Error al cargar lista de errores: {e}", "error")
         return redirect(url_for('dashboard'))
 
+@app.route('/fix-drive-token', methods=['POST'])
+@login_required
+def fix_drive_token():
+    try:
+        # Aquí llamarías a la lógica de refresh_google_token()
+        # O simplemente limpiarías los errores de la DB para forzar reintento
+        from refresh_drive_token import refresh_google_token
+        success = refresh_google_token()
+        
+        if success:
+            flash("✅ Token de Google Drive actualizado correctamente.", "success")
+        else:
+            flash("⚠️ No se pudo autorizar automáticamente. Revisa credentials.json.", "warning")
+            
+    except Exception as e:
+        flash(f"Error técnico: {e}", "error")
+    return redirect(url_for('dashboard'))
+
 if __name__ == '__main__':
     # Puerto dinámico para despliegues tipo Railway/Heroku
     port = int(os.environ.get("PORT", 5050))
