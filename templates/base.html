@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="es" data-bs-theme="dark">
-    <head>
+<head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CloudGram - Gestión Inteligente</title>
@@ -9,14 +9,9 @@
     <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
 
     <style>
-        body { 
-            font-family: 'Inter', sans-serif; 
-        }
-
-        .navbar-brand { 
-            font-weight: bold; 
-            color: #00d4ff !important; 
-        }
+        body { font-family: 'Inter', sans-serif; }
+        .navbar-brand { font-weight: bold; color: #00d4ff !important; }
+        .text-cyan { color: #00d4ff !important; }
     </style>
 </head>
 <body>
@@ -32,13 +27,14 @@
                 <li class="nav-item"><a class="nav-link" href="{{ url_for('index') }}">Inicio</a></li>
                 
                 {% if current_user.is_authenticated %}
-                    <li class="nav-item"><a class="nav-link text-info" href="{{ url_for('dashboard') }}">Dashboard</a></li>
+                    <li class="nav-item"><a class="nav-link text-info me-2" href="{{ url_for('dashboard') }}">Dashboard</a></li>
                     
                     <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle text-white fw-bold" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                            👤 {{ current_user.nombre if hasattr(current_user, 'nombre') else 'Mi Cuenta' }}
+                        <a class="nav-link dropdown-toggle btn btn-outline-secondary btn-sm px-3 text-white" 
+                           href="#" id="navbarDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            👤 {{ current_user.nombre | default('Mi Cuenta') }}
                         </a>
-                        <ul class="dropdown-menu dropdown-menu-dark dropdown-menu-end shadow-lg border-secondary">
+                        <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark border-secondary shadow-lg">
                             <li><a class="dropdown-item" href="{{ url_for('perfil') }}">⚙️ Ajustes de Perfil</a></li>
                             <li><hr class="dropdown-divider border-secondary"></li>
                             <li><a class="dropdown-item text-danger" href="{{ url_for('logout') }}">🚪 Cerrar Sesión</a></li>
@@ -51,11 +47,15 @@
         </div>
     </div>
 </nav>
+
 <div class="container mt-4">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         {% for category, message in messages %}
-          <div class="alert alert-{{ 'danger' if category == 'error' else 'success' }}">{{ message }}</div>
+          <div class="alert alert-{{ 'danger' if category == 'error' else 'success' }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+          </div>
         {% endfor %}
       {% endif %}
     {% endwith %}
