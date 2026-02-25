@@ -140,7 +140,7 @@ class DatabaseHandler:
                     WHERE name ILIKE %s 
                     OR type ILIKE %s 
                     OR technical_description ILIKE %s
-                    LIMIT 10
+                    LIMIT 1000
                     """
                     like_keyword = f'%{keyword}%'
                     cur.execute(query, (like_keyword, like_keyword, like_keyword))
