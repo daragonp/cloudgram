@@ -96,40 +96,34 @@ def print_server_welcome():
         print("⚠️  ADVERTENCIA: Faltan llaves. El bot podría no funcionar.")
     print("═" * 60 + "\n")
 # 3. FUNCIONES DE COMANDO
-async def list_files_command(update, context):
+async def list_files_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     files = db.get_last_files(20)
     if not files:
-        await update.message.reply_text("📭 No hay archivos registrados aún.")
-        return
+        return await update.message.reply_text("La lista está vacía.")
     
-    response = "📂 *Últimos 20 archivos subidos:*\n\n"
-    for fid, name, url, service, date in files:
-        # Manejo de fecha flexible
-        try:
-            dt = datetime.fromisoformat(str(date)).strftime("%d/%m %H:%M")
-        except:
-            dt = "Reciente"
-        response += f"• `{name}`\n  └ {service.capitalize()}: [Abrir]({url}) | _{dt}_\n\n"
+    text = "📋 *Últimos 20 archivos:*\n\n"
+    for i, f in enumerate(files, 1): # El '1' inicia el conteo en 1
+        # f[1] es el nombre, f[2] es la url
+        text += f"{i}. [{f[1]}]({f[2]}) ({f[3].upper()})\n"
     
-    await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
-
-async def search_command(update, context):
-    if not context.args:
-        await update.message.reply_text("🔍 Uso: `/buscar palabra`")
-        return
+    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
     
+async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = " ".join(context.args)
-    results = db.search_by_name(query)
+    if not query:
+        return await update.message.reply_text("🔎 Indica el nombre del archivo.")
     
+    results = db.search_by_name(query) # Esta función ahora devuelve summary y tech_desc
     if not results:
-        await update.message.reply_text(f"❌ No encontré archivos con: `{query}`")
-        return
+        return await update.message.reply_text("❌ No encontré archivos con ese nombre.")
     
-    text = f"🔎 *Resultados para:* `{query}`\n\n"
-    for fid, name, url, service in results:
-        text += f"ID: `{fid}` - [{name}]({url}) ({service.capitalize()})\n"
+    text = "🔎 *Resultados encontrados:*\n\n"
+    for res in results:
+        # Ajustamos los índices según tu nuevo SELECT de search_by_name: 
+        # id, name, cloud_url, service, summary, technical_description
+        text += f"📄 *{res[1]}*\n🔗 [Enlace]({res[2]}) | {res[3].upper()}\n\n"
     
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
 async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = context.user_data
@@ -267,16 +261,21 @@ async def upload_process(update, context, target_files_info: list, predefined_em
         cloud_links = []
         for cloud in selected_clouds:
             try:
+                # Subir y obtener URL
                 url = await (dropbox_svc.upload(local_path, file_name) if cloud == 'dropbox' else drive_svc.upload(local_path, file_name))
                 if url:
-                    cloud_links.append(f"✅ {cloud.capitalize()}")
+                    # AQUÍ ESTÁ EL CAMBIO: Creamos un link Markdown
+                    cloud_links.append(f"[✅ {cloud.capitalize()}]({url})")
+                    
                     db.register_file(
                         telegram_id=original_info['id'], name=file_name, f_type=ext,
                         cloud_url=url, service=cloud, content_text=texto,
                         embedding=vector, summary=resumen, technical_description=desc_tec,
                         folder_id=user_data.get('current_folder_id')
                     )
-            except: cloud_links.append(f"❌ {cloud}")
+            except Exception as e:
+                print(f"Error subiendo a {cloud}: {e}")
+                cloud_links.append(f"❌ {cloud.capitalize()}")
 
         final_report.append(f"📄 `{file_name}`\n" + " | ".join(cloud_links))
         if os.path.exists(local_path): os.remove(local_path)
@@ -472,17 +471,15 @@ async def cancelar_handler(update, context):
         "Estoy listo para tu siguiente búsqueda o archivo."
     )
 
-async def delete_command(update, context):
-    if not context.args:
-        return await update.message.reply_text("🗑️ Uso: `/eliminar palabra` (ej: `/eliminar foto`)")
-    
+async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = " ".join(context.args)
-    results = db.search_by_name(query)
+    if not query:
+        return await update.message.reply_text("🗑️ Indica el nombre para eliminar.")
     
+    results = db.search_by_name(query)
     if not results:
-        return await update.message.reply_text(f"❌ No se encontraron archivos con: `{query}`")
-
-    # Guardamos los datos en context para la paginación
+        return await update.message.reply_text("❌ No hay coincidencias para eliminar.")
+    
     context.user_data['search_results'] = results
     context.user_data['current_page'] = 0
     context.user_data['state'] = 'waiting_delete_selection'
