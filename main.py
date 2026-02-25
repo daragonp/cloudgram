@@ -236,68 +236,54 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # 4. PROCESO DE SUBIDA Y CALLBACKS
 async def upload_process(update, context, target_files_info: list, predefined_embedding=None):
+    """Procesa archivos, genera resúmenes IA y registra en DB"""
     user_data = context.user_data
     selected_clouds = user_data.get('selected_clouds', set())
-    final_report = []
-
-    # Si no hay nubes, no podemos subir, pero avisamos
     if not selected_clouds:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id, 
-            text="⚠️ No has seleccionado ninguna nube. Por favor, selecciona al menos una antes de continuar."
-        )
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="⚠️ Selecciona al menos una nube.")
         return
 
+    final_report = []
     for local_path, file_name, original_info in target_files_info:
-        # --- CORRECCIÓN CRÍTICA: Asegurar descarga ---
-        # Si el archivo NO existe localmente (y no es ubicación), hay que descargarlo AHORA
-        if not os.path.exists(local_path) and not str(original_info['id']).startswith("LOC_"):
+        if not os.path.exists(local_path):
             try:
                 tg_f = await context.bot.get_file(original_info['id'])
                 await tg_f.download_to_drive(local_path)
-            except Exception as e:
-                print(f"Error descargando para proceso: {e}")
-                continue
+            except: continue
+
+        # IA: Texto, Resumen y Embedding
+        texto = await AIHandler.extract_text(local_path)
+        vector = predefined_embedding
+        resumen = None
+        ext = file_name.split('.')[-1].lower()
+        desc_tec = f"Archivo {ext.upper()}"
+
+        if texto:
+            if not vector: vector = await AIHandler.get_embedding(texto)
+            resumen = await AIHandler.generate_summary(texto)
+        else:
+            resumen = f"Documento binario/comprimido ({ext}). No se extrajo texto."
 
         cloud_links = []
-        texto_extraido = None
-        vector_ia = predefined_embedding
-
-        # Extraer texto solo si el archivo existe
-        if not vector_ia and os.path.exists(local_path):
-            texto_extraido = await AIHandler.extract_text(local_path)
-            if texto_extraido:
-                vector_ia = await AIHandler.get_embedding(texto_extraido)
-
         for cloud in selected_clouds:
             try:
-                url = None
-                if cloud == 'dropbox': url = await dropbox_svc.upload(local_path, file_name)
-                elif cloud == 'drive': url = await drive_svc.upload(local_path, file_name)
-                
+                url = await (dropbox_svc.upload(local_path, file_name) if cloud == 'dropbox' else drive_svc.upload(local_path, file_name))
                 if url:
-                    cloud_links.append(f"🔗 [{cloud.capitalize()}]({url})")
+                    cloud_links.append(f"✅ {cloud.capitalize()}")
                     db.register_file(
-                        telegram_id=original_info['id'],
-                        name=file_name,
-                        f_type=original_info['type'],
-                        cloud_url=url,
-                        service=cloud,
-                        content_text=texto_extraido,
-                        embedding=vector_ia,
+                        telegram_id=original_info['id'], name=file_name, f_type=ext,
+                        cloud_url=url, service=cloud, content_text=texto,
+                        embedding=vector, summary=resumen, technical_description=desc_tec,
                         folder_id=user_data.get('current_folder_id')
                     )
-            except Exception as e:
-                print(f"Error subida {cloud}: {e}")
-                cloud_links.append(f"❌ {cloud}: Error")
+            except: cloud_links.append(f"❌ {cloud}")
 
-        final_report.append(f"📄 `{file_name}`\n" + "\n".join(cloud_links))
+        final_report.append(f"📄 `{file_name}`\n" + " | ".join(cloud_links))
         if os.path.exists(local_path): os.remove(local_path)
 
-    report = "✅ *Subida completada*\n\n" + "\n\n".join(final_report)
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=report, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="🚀 *Subida finalizada:*\n\n" + "\n".join(final_report), parse_mode=ParseMode.MARKDOWN)
 
-# En main.py
+
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
@@ -430,60 +416,53 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 5. BÚSQUEDA IA Y ELIMINAR
 
 async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Búsqueda semántica usando embeddings de OpenAI y registros de Supabase"""
+    """Búsqueda Semántica Avanzada (Punto 2 y 3)"""
     if not context.args:
-        return await update.message.reply_text("🔎 *Uso:* `/buscar_ia concepto` (ej: contrato de renta)", parse_mode=ParseMode.MARKDOWN)
+        return await update.message.reply_text("🔎 *Uso:* `/buscar_ia concepto`", parse_mode=ParseMode.MARKDOWN)
     
-    query_text = " ".join(context.args).lower()
-    msg = await update.message.reply_text("🤖 Analizando mi memoria neuronal...")
+    query_text = " ".join(context.args)
+    msg = await update.message.reply_text("🤖 Consultando mi base neuronal...")
     
     try:
-        # 1. Obtener Embedding de la consulta (Usando el openai_client global)
+        # 1. Generar Embedding del texto buscado
         response = openai_client.embeddings.create(
             input=[query_text],
             model="text-embedding-3-small"
         )
         query_vector = response.data[0].embedding
 
-        # 2. Obtener archivos con embeddings de la DB (Variable db global)
-        files = db.get_all_with_embeddings()
-        results = []
+        # 2. Llamar a la función de búsqueda semántica de la DB (La que actualizamos antes)
+        # Debe devolver: id, name, url, similarity, summary, service
+        results = db.search_semantic(query_vector, limit=5)
         
-        # 3. Procesar similitud (Cálculo de Coseno)
-        for f_id, name, url, service, content, emb_json in files:
-            try:
-                if not emb_json or emb_json in ["error_limit", "[]"]: 
-                    continue
-                
-                emb = json.loads(emb_json)
-                
-                # Math: Dot product / (norm_a * norm_b)
-                score = np.dot(query_vector, emb) / (np.linalg.norm(query_vector) * np.linalg.norm(emb))
-                
-                # Bonus por coincidencia exacta en nombre o contenido
-                if query_text in (content or "").lower() or query_text in name.lower():
-                    score += 0.2
-                    
-                if score > 0.35: # Umbral de relevancia
-                    results.append((score, name, url, service))
-            except Exception as e:
-                continue 
-        
-        results.sort(key=lambda x: x[0], reverse=True)
-        
-        if not results:
-            return await msg.edit_text("😔 No encontré nada relacionado con ese contexto.")
-        
-        out = "🎯 *Resultados de búsqueda inteligente:*\n\n"
-        for s, n, u, sv in results[:5]:
-            final_score = min(int(s * 100), 100)
-            out += f"🔹 [{n}]({u}) \n    _Confianza: {final_score}%_ | `{sv.upper()}`\n\n"
+        if not results or results[0]['similarity'] < 0.25:
+            # FALLBACK (Punto 2): Si la IA no encuentra nada, buscamos por nombre/tipo
+            await msg.edit_text("🔄 No hay coincidencias exactas por concepto. Buscando por nombre...")
+            tradicional = db.search_by_name(query_text)
+            if not tradicional:
+                return await msg.edit_text("😔 No encontré nada, ni siquiera por nombre.")
+            
+            out = f"🔎 *Resultados encontrados por nombre/tipo:*\n\n"
+            for fid, name, url, service, summary, tech in tradicional:
+                res_txt = f"_{summary}_" if summary else f"Tipo: {tech or 'Archivo'}"
+                out += f"📄 *{name}*\n└ {res_txt}\n🔗 [Abrir]({url})\n\n"
+        else:
+            # MOSTRAR RESULTADOS CON RESUMEN (Punto 3)
+            out = "🎯 *Resultados de búsqueda inteligente:*\n\n"
+            for res in results:
+                confianza = int(res['similarity'] * 100)
+                resumen = res['summary'] if res['summary'] else "Sin resumen disponible."
+                out += (
+                    f"📄 *{res['name']}* ({confianza}%)\n"
+                    f"📝 *Resumen:* _{resumen}_\n"
+                    f"☁️ `{res['service'].upper()}` | 🔗 [Ver]({res['url']})\n\n"
+                )
         
         await msg.edit_text(out, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
 
     except Exception as e:
         print(f"❌ ERROR EN BUSQUEDA IA: {e}")
-        await msg.edit_text("⚠️ No pude completar la búsqueda. Revisa los logs del servidor.")
+        await msg.edit_text("⚠️ Hubo un error procesando la búsqueda.")
 
 async def cancelar_handler(update, context):
     """Limpia cualquier estado y responde con éxito"""
@@ -563,18 +542,16 @@ async def execute_full_deletion(fid, name, service, update):
         await update.message.reply_text(f"❌ Error durante el borrado: {e}")
         
 # 6. CONFIGURACIÓN E INICIO
+
 async def post_init(application):
-    """Configura los comandos en el botón Menú de Telegram"""
     await application.bot.set_my_commands([
-        BotCommand("start", "Reactivar el bot"),
-        BotCommand("listar", "Ver últimos archivos"),
-        BotCommand("explorar", "Ver carpetas y archivos"),
-        BotCommand("buscar", "Búsqueda por nombre"),
-        BotCommand("buscar_ia", "Búsqueda inteligente"),
-        BotCommand("eliminar", "Borrar registros")
-
+        BotCommand("start", "🏠 Menú Principal"),
+        BotCommand("buscar_ia", "🤖 Búsqueda Inteligente"),
+        BotCommand("explorar", "📂 Mis Carpetas"),
+        BotCommand("listar", "📋 Recientes"),
+        BotCommand("buscar", "🔎 Buscar por nombre"),
+        BotCommand("eliminar", "🗑️ Borrar archivos")
     ])
-
 # 7. CARPETAS Y ARCHIVOS (EXPLORADOR)
 
 async def cambiar_directorio(update, context):
@@ -617,7 +594,6 @@ if __name__ == '__main__':
     
     app = ApplicationBuilder().token(os.getenv("TELEGRAM_BOT_TOKEN")).post_init(post_init).build()
     
-    # --- NO OLVIDES REGISTRARLOS ---
     # Comandos principales
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("listar", list_files_command))

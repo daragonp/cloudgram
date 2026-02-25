@@ -133,3 +133,23 @@ class AIHandler:
             text = f"Error al extraer texto de {ext}"
         
         return text.replace('\x00', '').strip()
+    
+    @staticmethod
+    async def generate_summary(text):
+        """Genera un resumen ejecutivo del texto para mostrar en búsquedas"""
+        try:
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini", # Usamos el modelo mini por ahorro y velocidad
+                messages=[
+                    {"role": "system", "content": "Eres un archivista experto. Resume el siguiente texto en máximo 2 frases cortas que describan de qué trata el documento."},
+                    {"role": "user", "content": text[:4000]} # Solo enviamos el inicio para ahorrar tokens
+                ],
+                max_tokens=100
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"Error generando resumen: {e}")
+            return "Resumen no disponible."

@@ -65,65 +65,80 @@ async def procesar_archivos_viejos(progreso_callback=None):
     final_msg = f"COMPLETADO: {reporte['nuevos']} nuevos, {reporte['errores']} errores."
     if progreso_callback: await progreso_callback(final_msg)
     return final_msg
+# ... (tus otros imports se mantienen igual)
 
 async def _indexar_si_falta(name, servicio, reporte, progreso_callback=None):
-    """Lógica para procesar un archivo individual"""
+    """Lógica mejorada para procesar cualquier archivo y generar resúmenes"""
     
-    # IMPORTANTE: Filtrar nombres vacíos o tipos de sistema
     if not name or name in [".", "..", "None", "General", "Imágenes"]:
         return
 
-    # Verificamos si ya existe en la base de datos
     existente = db.get_file_by_name_and_service(name, servicio)
     
-    if existente and existente.get('embedding'):
+    # Si ya tiene embedding y summary, saltamos
+    if existente and existente.get('embedding') and existente.get('summary'):
         return
 
     if progreso_callback: await progreso_callback(f"Procesando: {name} ({servicio})...")
     
     local_path = os.path.join("descargas", name)
+    extension = name.split('.')[-1].lower() if '.' in name else 'desconocido'
     
     try:
         success = False
-        url = None
+        url = "link_no_disponible"
         
-        # 1. Descarga y validación de NO ser carpeta
+        # 1. Descarga
         if servicio == 'dropbox':
-            # Verificamos que no sea una carpeta antes de descargar
-            # (Asumiendo que list_files filtró, pero re-aseguramos)
             success = await dropbox_svc.download_file(f"/{name}", local_path)
-            if success:
-                url = await dropbox_svc.get_link(f"/{name}")
+            if success: url = await dropbox_svc.get_link(f"/{name}")
         elif servicio == 'drive':
             success = await drive_svc.download_file_by_name(name, local_path)
-            if success:
-                url = await drive_svc.get_link_by_name(name)
+            if success: url = await drive_svc.get_link_by_name(name)
 
         if not success or not os.path.exists(local_path):
-            # Si falla porque es una carpeta, DropboxService debería devolver False
-            raise Exception("No se pudo descargar o es un directorio.")
+            raise Exception("No se pudo descargar.")
 
-        # 2. Análisis IA (OCR, Whisper, etc.)
-        texto = await AIHandler.extract_text(local_path)
-        texto_limpio = limpiar_y_recortar_texto(texto)
-        
+        # 2. Análisis IA
+        texto_limpio = ""
         vector = None
-        if texto_limpio:
-            vector = await AIHandler.get_embedding(texto_limpio)
+        resumen = ""
+        desc_tecnica = f"Archivo tipo {extension.upper()}"
 
-        # 3. Registro o Actualización en DB
+        try:
+            # Intentamos extraer texto
+            texto = await AIHandler.extract_text(local_path)
+            texto_limpio = limpiar_y_recortar_texto(texto)
+            
+            if texto_limpio and len(texto_limpio.strip()) > 20:
+                # PUNTO 3: Generar Resumen (Solo si hay texto suficiente)
+                # Nota: Necesitarás crear este método en AIHandler
+                resumen = await AIHandler.generate_summary(texto_limpio)
+                vector = await AIHandler.get_embedding(texto_limpio)
+            else:
+                # PUNTO 2: Fallback para archivos sin texto (ZIP, EXE, etc.)
+                resumen = f"Documento o binario con extensión .{extension}. No contiene texto extraíble para IA."
+                desc_tecnica = f"Archivo de datos/comprimido .{extension}"
+        except Exception as ai_err:
+            print(f"⚠️ IA no pudo procesar contenido de {name}: {ai_err}")
+            resumen = f"Archivo registrado sin análisis de contenido (Error IA)."
+
+        # 3. Registro en DB con las nuevas columnas
+        # Asegúrate de que tu db.register_file acepte estos nuevos argumentos
         db.register_file(
             telegram_id="INDEXER_SYNC",
             name=name,
-            f_type=name.split('.')[-1] if '.' in name else 'file',
-            cloud_url=url or "link_no_disponible",
+            f_type=extension,
+            cloud_url=url,
             service=servicio,
             content_text=texto_limpio,
-            embedding=vector
+            embedding=vector,
+            summary=resumen, # NUEVA
+            technical_description=desc_tecnica # NUEVA
         )
         
         reporte['nuevos'] += 1
-        if progreso_callback: await progreso_callback(f"✅ Indexado con éxito: {name}")
+        if progreso_callback: await progreso_callback(f"✅ Registrado: {name}")
 
     except Exception as e:
         error_msg = str(e)
