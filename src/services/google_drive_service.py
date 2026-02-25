@@ -82,11 +82,13 @@ class GoogleDriveService(CloudService):
     
     async def delete_file(self, file_name):
         """Busca un archivo por nombre y lo elimina de Google Drive"""
-        if not self.service: return False
         try:
+            # CAMBIO CRÍTICO: Asegurar que el servicio esté inicializado
+            service = self._get_service() 
+            
             # 1. Buscar el ID del archivo por su nombre
             query = f"name = '{file_name}' and trashed = false"
-            response = self.service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+            response = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
             files = response.get('files', [])
 
             if not files:
@@ -95,7 +97,7 @@ class GoogleDriveService(CloudService):
 
             # 2. Eliminar el archivo usando su ID
             file_id = files[0].get('id')
-            self.service.files().delete(fileId=file_id).execute()
+            service.files().delete(fileId=file_id).execute()
             print(f"✅ Archivo '{file_name}' (ID: {file_id}) eliminado de Google Drive.")
             return True
         except Exception as e:

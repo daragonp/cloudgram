@@ -131,11 +131,11 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = user_data.get('state')
 
     # --- LÓGICA 1: ELIMINACIÓN POR ÍNDICE (PERSISTENTE) ---
+    # --- DENTRO DE handle_text_input ---
     if state == 'waiting_delete_selection':
         if text.lower() in ['cancelar', 'terminar', 'salir']:
             user_data['state'] = None
             user_data.pop('search_results', None)
-            user_data.pop('current_page', None)
             return await update.message.reply_text("🚫 Sesión de limpieza finalizada.")
 
         if text.isdigit():
@@ -143,37 +143,53 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             results = user_data.get('search_results', [])
             
             if 0 <= idx < len(results):
-                fid, name, url, service = results.pop(idx)
-                msg = await update.message.reply_text(f"⏳ Eliminando `{name}`...")
+                # Extraemos datos del archivo seleccionado
+                # results[idx] es: (id, name, url, service, summary, tech_desc)
+                selected = results[idx]
+                fid = selected[0]
+                name = selected[1]
+                service = selected[3]
                 
+                msg = await update.message.reply_text(f"⏳ Eliminando `{name}` de {service.upper()}...")
+                
+                # 1. Borrado en la Nube
                 cloud_deleted = False
                 try:
                     if service == 'dropbox':
+                        # Dropbox usa el path con /
                         cloud_deleted = await dropbox_svc.delete_file(f"/{name}")
                     elif service == 'drive':
+                        # Drive usa el nombre para buscar el ID internamente
                         cloud_deleted = await drive_svc.delete_file(name)
                 except Exception as e:
-                    print(f"Error en borrado físico: {e}")
+                    print(f"Error borrado cloud: {e}")
 
+                # 2. Borrado en DB
                 db.delete_file_by_id(fid)
                 
-                status = "✅ Eliminado por completo." if cloud_deleted else "⚠️ Eliminado solo de la Base de Datos."
+                # 3. Remover de la lista local para actualizar la vista inmediatamente
+                results.pop(idx)
+                user_data['search_results'] = results
+
+                status = "✅ Eliminado por completo." if cloud_deleted else "⚠️ Eliminado de la DB (No se pudo borrar de la nube)."
                 await msg.edit_text(f"{status}\nArchivo: `{name}`")
 
+                # 4. Verificar si quedan archivos
                 if not results:
                     user_data['state'] = None
-                    return await update.message.reply_text("📭 Ya no quedan más archivos en esta búsqueda.")
+                    return await update.message.reply_text("📭 Ya no quedan archivos en esta búsqueda.")
                 
+                # Ajustar página si es necesario
                 items_per_page = 10
-                if user_data['current_page'] * items_per_page >= len(results):
-                    user_data['current_page'] = max(0, user_data['current_page'] - 1)
+                if user_data.get('current_page', 0) * items_per_page >= len(results):
+                    user_data['current_page'] = max(0, user_data.get('current_page', 0) - 1)
 
-                await update.message.reply_text("🔄 Lista actualizada:")
+                # Mostrar la lista actualizada automáticamente
+                await update.message.reply_text("🔄 Actualizando lista...")
                 return await send_delete_page(update, context, edit=False)
             else:
-                return await update.message.reply_text(f"❌ Número inválido. Elige entre 1 y {len(results)}.")
-
-    # --- LÓGICA 2: RENOMBRADO ---
+                return await update.message.reply_text(f"❌ Número fuera de rango. Elige entre 1 y {len(results)}.")
+    
     if state == 'renaming' and user_data.get('file_queue'):
         file_info = user_data['file_queue'][-1]
         old_name = file_info['name']
@@ -488,29 +504,33 @@ async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_delete_page(update, context, edit=False):
     user_data = context.user_data
-    results = user_data['search_results']
-    page = user_data['current_page']
+    results = user_data.get('search_results', [])
+    page = user_data.get('current_page', 0)
     items_per_page = 10
     
     start_idx = page * items_per_page
     end_idx = start_idx + items_per_page
     current_items = results[start_idx:end_idx]
     
-    text = f"🔍 *Resultados de búsqueda* (Página {page + 1}):\n\n"
-    for i, (fid, name, url, service) in enumerate(current_items, start_idx + 1):
-        text += f"{i}. `{name}` ({service.capitalize()})\n"
-    
-    text += "\n🔢 Responde con el **número** para eliminar o usa los botones:"
+    if not current_items:
+        return await update.effective_chat.send_message("❌ No hay más archivos para mostrar.")
 
-    # Construcción de botones de navegación
+    text = f"🗑️ *Panel de Eliminación* (Pág. {page + 1})\n"
+    text += "Escribe el **número** del archivo para borrarlo:\n\n"
+    
+    for i, item in enumerate(current_items, start_idx + 1):
+        # item[1] es name, item[3] es service
+        text += f"{i}. `{item[1]}` | _{item[3].capitalize()}_\n"
+    
+    # Botones
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(InlineKeyboardButton("⬅️ Atrás", callback_data="del_page_prev"))
+        nav_buttons.append(InlineKeyboardButton("⬅️ Anterior", callback_data="del_page_prev"))
     if end_idx < len(results):
         nav_buttons.append(InlineKeyboardButton("Siguiente ➡️", callback_data="del_page_next"))
 
     keyboard = [nav_buttons] if nav_buttons else []
-    keyboard.append([InlineKeyboardButton("❌ CANCELAR", callback_data="cancel_deletion")])
+    keyboard.append([InlineKeyboardButton("❌ CANCELAR Y SALIR", callback_data="cancel_deletion")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -518,7 +538,7 @@ async def send_delete_page(update, context, edit=False):
         await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
     else:
         await update.effective_chat.send_message(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
-
+        
 async def execute_full_deletion(fid, name, service, update):
     try:
         # 1. Intentar borrar de la Nube
