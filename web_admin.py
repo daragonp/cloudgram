@@ -9,10 +9,10 @@ from flask_wtf.csrf import CSRFProtect
 
 # --- NÚCLEO DEL PROYECTO ---
 from src.database.db_handler import DatabaseHandler
-from indexador import ejecutar_indexacion_completa, ejecutar_indexacion_paso_a_paso
+from src.scripts.indexador import ejecutar_indexacion_completa, ejecutar_indexacion_paso_a_paso
 from src.services.dropbox_service import DropboxService
 from src.services.google_drive_service import GoogleDriveService
-from refresh_drive_token import refresh_google_token
+from src.scripts.refresh_drive_token import refresh_google_token
 
 # Inicialización
 db = DatabaseHandler()
