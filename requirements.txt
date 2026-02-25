@@ -23,7 +23,7 @@ google-auth-httplib2==0.3.0
 google-auth-oauthlib==1.2.4
 googleapis-common-protos==1.72.0
 greenlet==3.3.1
-gunicorn
+gunicorn==25.1.0
 h11==0.16.0
 httpcore==1.0.9
 httplib2==0.31.2
