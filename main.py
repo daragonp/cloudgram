@@ -516,13 +516,15 @@ async def send_delete_page(update, context, edit=False):
         return await update.effective_chat.send_message("❌ No hay más archivos para mostrar.")
 
     text = f"🗑️ *Panel de Eliminación* (Pág. {page + 1})\n"
-    text += "Escribe el **número** del archivo para borrarlo:\n\n"
+    text += "Haz clic en el nombre para previsualizar.\n"
+    text += "Escribe el **número** para borrar permanentemente:\n\n"
     
     for i, item in enumerate(current_items, start_idx + 1):
-        # item[1] es name, item[3] es service
-        text += f"{i}. `{item[1]}` | _{item[3].capitalize()}_\n"
+        # item[1] es name, item[2] es cloud_url, item[3] es service
+        # Creamos un hipervínculo en el nombre del archivo
+        text += f"{i}. [{item[1]}]({item[2]}) | _{item[3].capitalize()}_\n"
     
-    # Botones
+    # Construcción de botones de navegación
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton("⬅️ Anterior", callback_data="del_page_prev"))
@@ -534,10 +536,21 @@ async def send_delete_page(update, context, edit=False):
     
     reply_markup = InlineKeyboardMarkup(keyboard)
 
+    # Importante: disable_web_page_preview=True para que no se llene el chat de cuadros de previsualización
     if edit and update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+        await update.callback_query.edit_message_text(
+            text, 
+            reply_markup=reply_markup, 
+            parse_mode=ParseMode.MARKDOWN,
+            disable_web_page_preview=True 
+        )
     else:
-        await update.effective_chat.send_message(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+        await update.effective_chat.send_message(
+            text, 
+            reply_markup=reply_markup, 
+            parse_mode=ParseMode.MARKDOWN,
+            disable_web_page_preview=True
+        )
         
 async def execute_full_deletion(fid, name, service, update):
     try:
