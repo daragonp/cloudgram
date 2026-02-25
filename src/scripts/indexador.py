@@ -1,6 +1,11 @@
-import asyncio
+import sys
 import os
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
+
+import asyncio
 import json
+
 import threading
 from src.database.db_handler import DatabaseHandler
 from src.utils.ai_handler import AIHandler
@@ -103,26 +108,27 @@ async def _indexar_si_falta(name, servicio, reporte, progreso_callback=None):
         texto_limpio = ""
         vector = None
         resumen = ""
-        desc_tecnica = f"Archivo tipo {extension.upper()}"
+        desc_tecnica = f"Documento {extension.upper()}"
 
         try:
-            # Intentamos extraer texto
             texto = await AIHandler.extract_text(local_path)
             texto_limpio = limpiar_y_recortar_texto(texto)
             
-            if texto_limpio and len(texto_limpio.strip()) > 20:
-                # PUNTO 3: Generar Resumen (Solo si hay texto suficiente)
-                # Nota: Necesitarás crear este método en AIHandler
-                resumen = await AIHandler.generate_summary(texto_limpio)
-                vector = await AIHandler.get_embedding(texto_limpio)
+            # Si el archivo tiene contenido real
+            if texto_limpio and len(texto_limpio.strip()) > 50:
+                # Obtenemos resumen y embedding en paralelo para ganar velocidad
+                resumen, vector = await asyncio.gather(
+                    AIHandler.generate_summary(texto_limpio),
+                    AIHandler.get_embedding(texto_limpio)
+                )
             else:
-                # PUNTO 2: Fallback para archivos sin texto (ZIP, EXE, etc.)
-                resumen = f"Documento o binario con extensión .{extension}. No contiene texto extraíble para IA."
-                desc_tecnica = f"Archivo de datos/comprimido .{extension}"
+                # Punto 2: Fallback para archivos sin texto (ZIP, EXE, etc.)
+                resumen = f"Archivo tipo .{extension} indexado por nombre. Sin contenido de texto extraíble."
+                desc_tecnica = f"Contenedor/Binario {extension.upper()}"
+        
         except Exception as ai_err:
-            print(f"⚠️ IA no pudo procesar contenido de {name}: {ai_err}")
-            resumen = f"Archivo registrado sin análisis de contenido (Error IA)."
-
+            print(f"⚠️ IA saltada para {name}: {ai_err}")
+            resumen = f"Archivo .{extension} registrado (Análisis IA no disponible)."
         # 3. Registro en DB con las nuevas columnas
         # Asegúrate de que tu db.register_file acepte estos nuevos argumentos
         db.register_file(
@@ -191,3 +197,23 @@ async def ejecutar_indexacion_paso_a_paso():
     resultado_final = await task
     yield f"data: {resultado_final}\n\n"
     yield "data: 100\n\n"
+    
+
+# --- BLOQUE DE EJECUCIÓN MANUAL ---
+if __name__ == "__main__":
+    async def main():
+        print("🚀 Iniciando proceso de indexación manual...")
+        
+        # Definimos un callback simple para ver el progreso en consola
+        async def consola_progreso(mensaje):
+            print(f"  [LOG] {mensaje}")
+            
+        resultado = await procesar_archivos_viejos(consola_progreso)
+        print(f"\n✨ Proceso finalizado: {resultado}")
+
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n🛑 Indexación cancelada por el usuario.")
+    except Exception as e:
+        print(f"\n❌ Error fatal: {e}")

@@ -40,7 +40,7 @@ class DatabaseHandler:
             return sqlite3.connect("cloudgram.db")
 
     def _setup_initial_db(self):
-        """Crea las tablas necesarias si no existen."""
+        """Crea las tablas con las nuevas columnas y la restricción UNIQUE."""
         with self._connect() as conn:
             with conn.cursor() as cur:
                 # 1. Tabla de Usuarios
@@ -54,7 +54,20 @@ class DatabaseHandler:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
-                # 2. Tabla de Archivos
+                
+                # 2. Tabla de Carpetas (Necesaria para folder_id)
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS folders (
+                        id SERIAL PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        service TEXT,
+                        cloud_folder_id TEXT,
+                        parent_id INTEGER REFERENCES folders(id),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+
+                # 3. Tabla de Archivos (CON COLUMNAS NUEVAS Y CONSTRAINT)
                 cur.execute('''
                     CREATE TABLE IF NOT EXISTS files (
                         id SERIAL PRIMARY KEY,
@@ -65,19 +78,34 @@ class DatabaseHandler:
                         cloud_url TEXT,
                         service TEXT,
                         content_text TEXT,
-                        embedding TEXT, 
-                        created_at TIMESTAMP
+                        embedding TEXT,
+                        summary TEXT,
+                        technical_description TEXT,
+                        folder_id INTEGER REFERENCES folders(id),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        CONSTRAINT unique_file_per_service UNIQUE (name, service)
                     )
                 ''')
-            conn.commit()
+                
+                # Migración manual por si las columnas no existen en tablas ya creadas
+                try:
+                    cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS summary TEXT")
+                    cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS technical_description TEXT")
+                    cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS folder_id INTEGER")
+                except: pass
 
+            conn.commit()
     # --- FUNCIONES DEL BOT ---
     
     def register_file(self, telegram_id, name, f_type, cloud_url, service, content_text=None, embedding=None, folder_id=None, summary=None, technical_description=None):
+        """Registro con ON CONFLICT corregido."""
         try:
+            # Convertir embedding a string JSON si es una lista/array
+            if isinstance(embedding, (list, np.ndarray)):
+                embedding = json.dumps(embedding.tolist() if isinstance(embedding, np.ndarray) else embedding)
+
             with self._connect() as conn:
                 with conn.cursor() as cur:
-                    # Usamos INSERT ... ON CONFLICT para actualizar si el archivo ya existe
                     cur.execute("""
                         INSERT INTO files (
                             telegram_id, name, type, cloud_url, service, 
@@ -90,22 +118,22 @@ class DatabaseHandler:
                             technical_description = EXCLUDED.technical_description,
                             embedding = COALESCE(EXCLUDED.embedding, files.embedding),
                             content_text = COALESCE(EXCLUDED.content_text, files.content_text),
-                            cloud_url = EXCLUDED.cloud_url
+                            cloud_url = EXCLUDED.cloud_url,
+                            telegram_id = EXCLUDED.telegram_id
                     """, (
                         telegram_id, name, f_type, cloud_url, service, 
                         content_text, embedding, folder_id, summary, technical_description
                     ))
                     conn.commit()
-                    print(f"✅ DB: Archivo '{name}' registrado/actualizado con éxito.")
+                    print(f"✅ DB: Archivo '{name}' registrado/actualizado.")
         except Exception as e:
             print(f"❌ ERROR CRÍTICO DB EN register_file: {e}")
-        
+            
     def search_by_name(self, keyword):
         try:
             with self._connect() as conn:
                 with conn.cursor() as cur:
-                    # Ahora buscamos en nombre, tipo y descripción técnica
-                    # Y traemos el 'summary' para mostrarlo en el bot
+                    # Traemos los nuevos campos para el Bot
                     query = """
                     SELECT id, name, cloud_url, service, summary, technical_description 
                     FROM files 
@@ -120,6 +148,37 @@ class DatabaseHandler:
         except Exception as e:
             print(f"❌ Error en search_by_name: {e}")
             return []
+        
+    def search_semantic(self, query_embedding, limit=5):
+        """Búsqueda vectorial con cálculo de similitud."""
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute('SELECT id, name, cloud_url, embedding, summary, service FROM files WHERE embedding IS NOT NULL')
+                    all_files = cur.fetchall()
+                
+                results = []
+                q_vec = np.array(query_embedding)
+
+                for f_id, name, url, f_emb_json, summary, service in all_files:
+                    try:
+                        if not f_emb_json: continue
+                        f_vec = np.array(json.loads(f_emb_json) if isinstance(f_emb_json, str) else f_emb_json)
+                        
+                        norm = (np.linalg.norm(q_vec) * np.linalg.norm(f_vec))
+                        similarity = np.dot(q_vec, f_vec) / norm if norm > 0 else 0
+                        
+                        results.append({
+                            "id": f_id, "name": name, "url": url, 
+                            "similarity": float(similarity), "summary": summary, "service": service
+                        })
+                    except: continue
+                
+                results.sort(key=lambda x: x["similarity"], reverse=True)
+                return results[:limit]
+        except Exception as e:
+            print(f"❌ Error semántico: {e}")
+            return []
 
     def get_last_files(self, limit=20):
         with self._connect() as conn:
@@ -133,52 +192,7 @@ class DatabaseHandler:
                 cur.execute("SELECT id, name, service, cloud_url FROM files WHERE id = %s", (file_id,))
                 return cur.fetchone() # Esto devolverá un diccionario gracias al RealDictCursor
     # --- IA Y WEB ---
-    def search_semantic(self, query_embedding, limit=3):
-        try:
-            with self._connect() as conn:
-                with conn.cursor() as cur:
-                    # 1. Ahora traemos también el 'summary' y 'service'
-                    cur.execute('SELECT id, name, cloud_url, embedding, summary, service FROM files WHERE embedding IS NOT NULL')
-                    all_files = cur.fetchall()
-                
-                results = []
-                q_vec = np.array(query_embedding)
-
-                for f_id, name, url, f_emb_json, summary, service in all_files:
-                    try:
-                        # Cargamos el vector (asegurándonos de que sea una lista/array)
-                        f_vec = np.array(json.loads(f_emb_json) if isinstance(f_emb_json, str) else f_emb_json)
-                        
-                        # Cálculo de similitud coseno
-                        norm = (np.linalg.norm(q_vec) * np.linalg.norm(f_vec))
-                        similarity = np.dot(q_vec, f_vec) / norm if norm > 0 else 0
-                        
-                        # Guardamos el resultado incluyendo el resumen
-                        results.append({
-                            "id": f_id,
-                            "name": name,
-                            "url": url,
-                            "similarity": similarity,
-                            "summary": summary,
-                            "service": service
-                        })
-                    except Exception as e:
-                        print(f"Error procesando vector de {name}: {e}")
-                        continue
-                
-                # Ordenamos por mayor similitud
-                results.sort(key=lambda x: x["similarity"], reverse=True)
-                return results[:limit]
-        except Exception as e:
-            print(f"❌ Error en búsqueda semántica: {e}")
-            return []
     
-    def delete_file_by_id(self, file_id):
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute('DELETE FROM files WHERE id = %s', (file_id,))
-            conn.commit()
-
     def get_user_by_email(self, email):
         with self._connect() as conn:
             # RealDictCursor emula el sqlite3.Row para acceder por nombre: user['id']
@@ -306,18 +320,17 @@ class DatabaseHandler:
     def get_file_by_name_and_service(self, name, service):
         try:
             with self._connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT * FROM files WHERE name = %s AND service = %s",
-                        (name, service)
-                    )
-                    columns = [desc[0] for desc in cur.description]
-                    row = cur.fetchone()
-                    return dict(zip(columns, row)) if row else None
-        except Exception as e:
-            print(f"❌ Error en get_file_by_name_and_service: {e}")
-            return None
-    
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("SELECT * FROM files WHERE name = %s AND service = %s", (name, service))
+                    return cur.fetchone()
+        except: return None
+
+    def delete_file_by_id(self, file_id):
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute('DELETE FROM files WHERE id = %s', (file_id,))
+            conn.commit()
+            
     def reset_failed_embeddings(self):
         
         """Limpia el campo embedding de los archivos que no se procesaron bien."""
