@@ -498,14 +498,19 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         raw_results = db.search_semantic(query_vector, limit=20)
 
         normalized = []
-        # Si la búsqueda semántica no arroja confianza suficiente, fallback por nombre
-        if not raw_results or (isinstance(raw_results, list) and len(raw_results) > 0 and raw_results[0].get('similarity', 1) < 0.25):
-            await msg.edit_text("🔄 No hay coincidencias exactas por concepto. Buscando por nombre...")
+        seen_names = set()
+        # aplicar umbral para similitud y eliminar duplicados
+        semantic = [r for r in raw_results if r.get('similarity', 0) >= 0.2]
+        if not semantic:
+            await msg.edit_text("🔄 No hay coincidencias relevantes por concepto. Buscando por nombre...")
             tradicional = db.search_by_name(query_text)
             if not tradicional:
                 return await msg.edit_text("😔 No encontré nada, ni siquiera por nombre.")
 
-            for fid, name, url, service, summary, tech in tradicional:
+            for fid, name, url, service, summary, tech in tradicional[:20]:
+                if name in seen_names:
+                    continue
+                seen_names.add(name)
                 normalized.append({
                     'id': fid,
                     'name': name,
@@ -515,10 +520,14 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     'score': None
                 })
         else:
-            for res in raw_results:
+            for res in semantic:
+                name = res.get('name')
+                if name in seen_names:
+                    continue
+                seen_names.add(name)
                 normalized.append({
                     'id': res.get('id'),
-                    'name': res.get('name'),
+                    'name': name,
                     'url': res.get('url'),
                     'service': res.get('service'),
                     'summary': res.get('summary') or 'Sin resumen disponible.',
@@ -632,8 +641,9 @@ async def send_search_page(update, context, edit=False):
     total_pages = (len(results) + items_per_page - 1) // items_per_page
 
     text = f"🎯 *Resultados de búsqueda* (Página {page+1}/{total_pages})\n\n"
-    for item in current_items:
+    for idx, item in enumerate(current_items, start_idx + 1):
         score = f" ({int(item['score']*100)}%)" if item.get('score') else ""
+        text += f"{idx}. "
         text += "────────────────────────\n"
         text += f"📄 *{item['name']}*{score}\n"
         text += f"📝 _{item.get('summary','')}_\n"
