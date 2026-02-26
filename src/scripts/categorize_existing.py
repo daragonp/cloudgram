@@ -6,67 +6,98 @@ Ejecútalo manualmente desde el entorno del bot (por ejemplo
 """
 import asyncio
 import os
+import dropbox
 from src.init_services import dropbox_svc, drive_svc
 from src.handlers.message_handlers import get_file_category, FILE_CATEGORIES
 
 async def categorize_dropbox():
     print("\n📁 Iniciando categorización en Dropbox...")
-    # Listar contenido de la raíz
-    entries = await dropbox_svc.list_files("")
-    for name in entries:
-        # ignorar carpetas (normalmente devuelve solo nombres)
-        # el método list_files ya filtra por carpeta/archivo indistintamente,
-        # pero asumimos que aquí sólo vienen los nombres.
-        category = get_file_category(name) or "Otros"
-        # si ya está en folder de categoría no hacer nada
-        if name in FILE_CATEGORIES or category == "Otros":
-            # si se llama igual a la carpeta, saltar
-            continue
-        dest_folder = category
-        source = f"/{name}"
-        dest = f"/{dest_folder}/{name}".replace("//", "/")
-        print(f"  - Moviendo {source} -> {dest}")
-        result = await dropbox_svc.move_file(source, dest)
-        if result:
-            print(f"    ✓ trasladado a {result}")
-        else:
-            print(f"    ⚠️ no se pudo mover {name}")
+    dbx = dropbox_svc.dbx
+
+    async def process_folder(path):
+        try:
+            res = dbx.files_list_folder(path)
+        except Exception as e:
+            print(f"⚠️ Error listando {path}: {e}")
+            return
+        for entry in res.entries:
+            if isinstance(entry, dropbox.files.FolderMetadata):
+                # evitar descender en las carpetas de categoría y en "Otros"
+                if entry.name in list(FILE_CATEGORIES.keys()) + ["Otros"]:
+                    print(f"  - saltando carpeta de categoría {entry.path_lower}")
+                    continue
+                await process_folder(entry.path_lower)
+            elif isinstance(entry, dropbox.files.FileMetadata):
+                name = entry.name
+                category = get_file_category(name) or "Otros"
+                parent = path.lstrip('/') or 'root'
+                print(f"  archivo {entry.path_lower} (carpeta padre={parent}) -> categoría {category}")
+                if category == "Otros":
+                    print("    categoría Otros, no se mueve")
+                    continue
+                target_folder = f"/{category}"
+                # si ya está en la carpeta correcta, saltar
+                if parent.lower() == category.lower():
+                    print("    ya en la carpeta correspondiente, saltando")
+                    continue
+                source = entry.path_lower
+                dest = f"{target_folder}/{name}".replace("//", "/")
+                print(f"    moviendo {source} -> {dest}")
+                moved = await dropbox_svc.move_file(source, dest)
+                if moved:
+                    print(f"    ✓ movido a {moved}")
+                else:
+                    print(f"    ⚠️ no se pudo mover {name}")
+            else:
+                print(f"  - tipo desconocido en {entry.path_lower}, omitiendo")
+
+    await process_folder('')
 
 async def categorize_drive():
     print("\n📁 Iniciando categorización en Google Drive...")
     svc = drive_svc._get_service()
-    # obtener todos los archivos en la raíz (no carpetas)
-    page_token = None
-    while True:
-        resp = svc.files().list(
-            q="'root' in parents and trashed = false",
-            spaces="drive",
-            fields="nextPageToken, files(id, name, mimeType, parents)",
-            pageToken=page_token
-        ).execute()
-        for f in resp.get('files', []):
-            # saltar carpetas (mimeType contiene "folder")
-            if f.get('mimeType', '').endswith('folder'):
-                continue
-            name = f['name']
-            category = get_file_category(name) or "Otros"
-            if category == "Otros":
-                continue
-            # asegurar que existe carpeta y tenemos su id
-            from main import CATEGORY_FOLDER_CACHE
-            folder_id = CATEGORY_FOLDER_CACHE['drive'].get(category)
-            if not folder_id:
-                folder_id = await drive_svc.create_folder(category, parent_id=None)
-                CATEGORY_FOLDER_CACHE['drive'][category] = folder_id
-            # comprobar si ya está dentro de esa carpeta
-            parents = f.get('parents', []) or []
-            if folder_id in parents:
-                continue
-            print(f"  - Moviendo {name} ({f['id']}) a carpeta {category}")
-            await drive_svc.move_file(f['id'], folder_id)
-        page_token = resp.get('nextPageToken', None)
-        if not page_token:
-            break
+
+    async def process_folder(folder_id, path_name="root"):
+        # lista el contenido de la carpeta indicada
+        page_token = None
+        while True:
+            resp = svc.files().list(
+                q=f"'{folder_id}' in parents and trashed = false",
+                spaces="drive",
+                fields="nextPageToken, files(id, name, mimeType, parents)",
+                pageToken=page_token
+            ).execute()
+            for f in resp.get('files', []):
+                if f.get('mimeType', '').endswith('folder'):
+                    # evitar carpetas de categoría
+                    if f['name'] in list(FILE_CATEGORIES.keys()) + ["Otros"]:
+                        print(f"  - saltando carpeta de categoría {f['name']} ({f['id']})")
+                        continue
+                    await process_folder(f['id'], path_name + "/" + f['name'])
+                else:
+                    name = f['name']
+                    category = get_file_category(name) or "Otros"
+                    print(f"  archivo Drive {path_name}/{name} -> categoría {category}")
+                    if category == "Otros":
+                        print("    categoría Otros, no se mueve")
+                        continue
+                    from main import CATEGORY_FOLDER_CACHE
+                    folder_cat_id = CATEGORY_FOLDER_CACHE['drive'].get(category)
+                    if not folder_cat_id:
+                        folder_cat_id = await drive_svc.create_folder(category, parent_id=None)
+                        CATEGORY_FOLDER_CACHE['drive'][category] = folder_cat_id
+                    parents = f.get('parents', []) or []
+                    if folder_cat_id in parents:
+                        print("    ya en carpeta, saltando")
+                        continue
+                    print(f"    moviendo {name} ({f['id']}) a carpeta {category}")
+                    await drive_svc.move_file(f['id'], folder_cat_id)
+            page_token = resp.get('nextPageToken', None)
+            if not page_token:
+                break
+    # iniciar en la raíz
+    await process_folder('root')
+
 
 async def main():
     # Asegurar que las carpetas de categoría existen y la cache esté poblada
