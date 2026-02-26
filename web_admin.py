@@ -266,6 +266,23 @@ def run_indexer_endpoint():
     threading.Thread(target=thread_wrapper, daemon=True).start()
     return {"status": "success"}, 200
 
+@app.route('/run-categorizer', methods=['POST'])
+@login_required
+def run_categorizer_endpoint():
+    """Inicia en background el script de categorización de archivos ya en la nube."""
+    def thread_wrapper():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            from src.scripts.categorize_existing import main as categorize_main
+            loop.run_until_complete(categorize_main())
+        finally:
+            loop.close()
+
+    threading.Thread(target=thread_wrapper, daemon=True).start()
+    flash("🗂️ Iniciada categorización de archivos en la nube. Revisa los logs para más detalles.", "info")
+    return redirect(url_for('dashboard'))
+
 @app.route('/progress-indexer')
 @login_required
 def progress_indexer():

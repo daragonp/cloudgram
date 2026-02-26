@@ -102,3 +102,17 @@ class DropboxService(CloudService):
         except Exception as e:
             print(f"❌ Error real en Dropbox: {e}")
             return None
+
+    # --- operaciones adicionales ------------------------------------------------
+    async def move_file(self, source_path: str, dest_path: str):
+        """Mueve o renombra un archivo/carpeta dentro de Dropbox.
+        Devuelve la ruta nueva o False en caso de fallo.
+        """
+        if not self.dbx:
+            return False
+        try:
+            res = self.dbx.files_move_v2(source_path, dest_path, autorename=True)
+            return res.metadata.path_display
+        except Exception as e:
+            print(f"❌ Error moviendo en Dropbox: {e}")
+            return False

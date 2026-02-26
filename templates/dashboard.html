@@ -30,6 +30,12 @@
                     onclick="startIndexing()">
                 🔍 Ejecutar Indexador IA
             </button>
+            <button type="button"
+                    id="btnCategorizer"
+                    class="btn btn-secondary px-4 fw-bold"
+                    onclick="startCategorizer()">
+                🗂️ Organizar archivos existentes
+            </button>
         </div>
     </div>
 
@@ -259,6 +265,21 @@
 
 <script>
 function startIndexing() {
+
+function startCategorizer() {
+    const btn = document.getElementById("btnCategorizer");
+    btn.disabled = true;
+    fetch("/run-categorizer", { method: "POST" })
+        .then(() => {
+            btn.innerText = "🗂️ Empezado…";
+            setTimeout(() => location.reload(), 3000);
+        })
+        .catch(err => {
+            console.error(err);
+            btn.disabled = false;
+        });
+}
+
 
     const btn = document.getElementById("btnIndexerMain");
     btn.disabled = true;

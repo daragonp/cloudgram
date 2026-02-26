@@ -34,12 +34,22 @@ from src.handlers.message_handlers import start, handle_any_file, show_cloud_men
 from src.utils.ai_handler import AIHandler
 
 # ============================================================================
+# CACHE GLOBAL DE CARPETAS
+# ============================================================================
+# guardaremos los ids/paths devueltos por los servicios para no volver a crear
+# una carpeta cada vez que subamos un archivo de la misma categoría.
+CATEGORY_FOLDER_CACHE = {
+    'dropbox': {},   # category_name -> path (ej. '/Documentos')
+    'drive': {}      # category_name -> folder_id
+}
+
+# ============================================================================
 # INICIALIZACIÓN DE CARPETAS POR CATEGORÍA
 # ============================================================================
 async def ensure_category_folders():
     """
     Crea automáticamente las carpetas de categoría en Dropbox y Google Drive
-    si no existen. Se ejecuta al startup del bot.
+    si no existen. Se ejecuta al startup del bot y rellena la cache.
     """
     print("\n📁 Inicializando estructura de carpetas por categoría...")
     categories = list(FILE_CATEGORIES.keys()) + ["Otros"]
@@ -48,7 +58,8 @@ async def ensure_category_folders():
         try:
             result = await dropbox_svc.create_folder(category_name, parent_path="")
             if result:
-                print(f"   [✅ Dropbox] {category_name}")
+                CATEGORY_FOLDER_CACHE['dropbox'][category_name] = result
+                print(f"   [✅ Dropbox] {category_name} -> {result}")
         except Exception as e:
             print(f"   [⚠️  Dropbox] {category_name}: {e}")
         
@@ -56,7 +67,8 @@ async def ensure_category_folders():
         try:
             result = await drive_svc.create_folder(category_name, parent_id=None)
             if result:
-                print(f"   [✅ Drive] {category_name}")
+                CATEGORY_FOLDER_CACHE['drive'][category_name] = result
+                print(f"   [✅ Drive] {category_name} -> {result}")
         except Exception as e:
             print(f"   [⚠️  Drive] {category_name}: {e}")
 
@@ -356,12 +368,17 @@ async def upload_process(update, context, target_files_info: list, predefined_em
         cloud_links = []
         for cloud in selected_clouds:
             try:
-                # Subir a la carpeta de categoría
                 if cloud == 'dropbox':
-                    url = await dropbox_svc.upload(local_path, file_name, folder=category)
+                    # usar cache para la ruta
+                    folder_arg = CATEGORY_FOLDER_CACHE['dropbox'].get(category, category)
+                    url = await dropbox_svc.upload(local_path, file_name, folder=folder_arg)
                 else:  # drive
-                    # Buscar/crear la carpeta en Drive
-                    folder_id = await drive_svc.create_folder(category, parent_id=None)
+                    # obtener folder_id del cache, si no existe crear y cachear
+                    folder_id = CATEGORY_FOLDER_CACHE['drive'].get(category)
+                    if not folder_id:
+                        folder_id = await drive_svc.create_folder(category, parent_id=None)
+                        if folder_id:
+                            CATEGORY_FOLDER_CACHE['drive'][category] = folder_id
                     url = await drive_svc.upload(local_path, file_name, folder_id=folder_id) if folder_id else None
                 
                 if url:

@@ -152,3 +152,25 @@ class GoogleDriveService(CloudService):
         except Exception as e:
             print(f"❌ Error Drive mkdir: {e}")
             return None
+
+    async def move_file(self, file_id: str, new_parent_id: str):
+        """Mueve un archivo a otra carpeta (o renombra) en Google Drive.
+        Si new_parent_id es None se deja en raíz.
+        Retorna True/False.
+        """
+        service = self._get_service()
+        try:
+            # obtener padres actuales
+            current = service.files().get(fileId=file_id, fields='parents').execute()
+            parents = current.get('parents', [])
+            remove_parents = ",".join(parents) if parents else None
+            body = {}
+            if new_parent_id:
+                body['addParents'] = new_parent_id
+            if remove_parents:
+                body['removeParents'] = remove_parents
+            service.files().update(fileId=file_id, body=body, fields='id, parents').execute()
+            return True
+        except Exception as e:
+            print(f"❌ Error moviendo en Drive: {e}")
+            return False
