@@ -45,11 +45,28 @@ if source_logo:
     except Exception as e:
         print(f"⚠️ No se pudo copiar logo al static root: {e}")
 
+    # if requested, also produce a transparent PNG version for modern clients
+    try:
+        from PIL import Image
+        img = Image.open(source_logo).convert("RGBA")
+        datas = img.getdata()
+        new_data = []
+        for item in datas:
+            # treat near-white as transparent (simple heuristic)
+            if item[0] > 240 and item[1] > 240 and item[2] > 240:
+                new_data.append((255, 255, 255, 0))
+            else:
+                new_data.append(item)
+        img.putdata(new_data)
+        png_path = os.path.join(app.static_folder, "logo", "logo.png")
+        img.save(png_path, "PNG")
+    except Exception as e:
+        print(f"⚠️ Error generando logo.png transparente: {e}")
+
     # generate favicon if missing, using the resolved source
     favicon_path = os.path.join(app.static_folder, "favicon.ico")
     if not os.path.exists(favicon_path):
         try:
-            from PIL import Image
             img = Image.open(source_logo)
             img.save(favicon_path, format='ICO')
         except Exception as e:
