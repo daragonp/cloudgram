@@ -23,7 +23,12 @@
 
                     <div class="mb-4">
                         <label class="form-label text-cyan">Nueva Contraseña</label>
-                        <input type="password" name="new_password" class="form-control" placeholder="Mínimo 6 caracteres">
+                        <div class="input-group">
+                            <input id="newPassword" type="password" name="new_password" class="form-control" placeholder="Mínimo 6 caracteres">
+                            <button class="btn btn-outline-secondary" type="button" id="togglePassword">
+                                👁️
+                            </button>
+                        </div>
                         <div class="form-text text-muted">Deja este campo vacío si no deseas cambiar la contraseña actual.</div>
                     </div>
 
@@ -33,4 +38,20 @@
         </div>
     </div>
 </div>
+
+<script>
+    // toggle visibility of new password field
+    document.addEventListener('DOMContentLoaded', function() {
+        const toggleBtn = document.getElementById('togglePassword');
+        const pwdInput = document.getElementById('newPassword');
+        if (toggleBtn && pwdInput) {
+            toggleBtn.addEventListener('click', function() {
+                const type = pwdInput.getAttribute('type') === 'password' ? 'text' : 'password';
+                pwdInput.setAttribute('type', type);
+                // optionally change icon text
+                toggleBtn.textContent = type === 'password' ? '👁️' : '🙈';
+            });
+        }
+    });
+</script>
 {% endblock %}

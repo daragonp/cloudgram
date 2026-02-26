@@ -390,3 +390,33 @@ class DatabaseHandler:
         except Exception as e:
             print(f"❌ Error generando SQL: {e}")
             return f"-- Error en la exportación: {e}"
+    
+    def update_user_name(self, user_id, nuevo_nombre):
+        """Actualiza el nombre para mostrar del administrador"""
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE users SET nombre = %s WHERE id = %s",
+                        (nuevo_nombre, user_id)
+                    )
+                    conn.commit()
+            return True
+        except Exception as e:
+            print(f"❌ Error actualizando nombre: {e}")
+            return False
+
+    def update_user_password(self, user_id, nuevo_hash):
+        """Actualiza la contraseña (hash) del administrador"""
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE users SET password_hash = %s WHERE id = %s",
+                        (nuevo_hash, user_id)
+                    )
+                    conn.commit()
+            return True
+        except Exception as e:
+            print(f"❌ Error actualizando password: {e}")
+            return False
