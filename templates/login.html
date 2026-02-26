@@ -14,6 +14,9 @@
                 <h4 class="card-title text-center mb-4 fw-normal">Acceso al Panel</h4>
                 
                 <form method="POST">
+                    <!-- CSRF token required by Flask-WTF -->
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
                     <div class="form-floating mb-3">
                         <input type="email" name="email" class="form-control" id="floatingInput" placeholder="nombre@ejemplo.com" required>
                         <label for="floatingInput">Correo electrónico</label>
