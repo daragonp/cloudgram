@@ -53,24 +53,61 @@ async def ensure_category_folders():
     """
     print("\n📁 Inicializando estructura de carpetas por categoría...")
     categories = list(FILE_CATEGORIES.keys()) + ["Otros"]
-    for category_name in categories:
-        # Dropbox
+    
+    # ========== DROPBOX ==========
+    if dropbox_svc.dbx:
         try:
-            result = await dropbox_svc.create_folder(category_name, parent_path="")
-            if result:
-                CATEGORY_FOLDER_CACHE['dropbox'][category_name] = result
-                print(f"   [✅ Dropbox] {category_name} -> {result}")
+            # Listar carpetas existentes en raíz
+            result = dropbox_svc.dbx.files_list_folder("", recursive=False)
+            existing_folders = {entry.name for entry in result.entries if hasattr(entry, 'name')}
+            print(f"   [DROPBOX] Carpetas existentes: {existing_folders}")
         except Exception as e:
-            print(f"   [⚠️  Dropbox] {category_name}: {e}")
+            print(f"   [⚠️  DROPBOX] Error listando: {e}")
+            existing_folders = set()
         
-        # Google Drive (root parent=None)
+        for category_name in categories:
+            # Solo crear si no existe
+            if category_name not in existing_folders:
+                try:
+                    result = await dropbox_svc.create_folder(category_name, parent_path="")
+                    if result:
+                        CATEGORY_FOLDER_CACHE['dropbox'][category_name] = result
+                        print(f"   [✅ DROPBOX] {category_name} -> {result} (CREADA)")
+                except Exception as e:
+                    print(f"   [⚠️  DROPBOX] {category_name}: {e}")
+            else:
+                # Ya existe, guardar en cache
+                CATEGORY_FOLDER_CACHE['dropbox'][category_name] = f"/{category_name}"
+                print(f"   [✅ DROPBOX] {category_name} -> /{category_name} (EXISTENTE)")
+        
+    # ========== GOOGLE DRIVE ==========
+    if drive_svc and drive_svc.service:
         try:
-            result = await drive_svc.create_folder(category_name, parent_id=None)
-            if result:
-                CATEGORY_FOLDER_CACHE['drive'][category_name] = result
-                print(f"   [✅ Drive] {category_name} -> {result}")
+            # Listar carpetas en raíz (parent es root)
+            query = "mimeType='application/vnd.google-apps.folder' and trashed=false and 'root' in parents"
+            results = drive_svc.service.files().list(
+                q=query, spaces='drive', fields='files(id, name)', pageSize=100
+            ).execute()
+            existing_drives = {f['name']: f['id'] for f in results.get('files', [])}
+            print(f"   [GOOGLE DRIVE] Carpetas existentes: {set(existing_drives.keys())}")
         except Exception as e:
-            print(f"   [⚠️  Drive] {category_name}: {e}")
+            print(f"   [⚠️  GOOGLE DRIVE] Error listando: {e}")
+            existing_drives = {}
+        
+        for category_name in categories:
+            if category_name in existing_drives:
+                # Ya existe, guardar en cache
+                CATEGORY_FOLDER_CACHE['drive'][category_name] = existing_drives[category_name]
+                print(f"   [✅ GOOGLE DRIVE] {category_name} -> {existing_drives[category_name]} (EXISTENTE)")
+            else:
+                # Crear
+                try:
+                    result = await drive_svc.create_folder(category_name, parent_id=None)
+                    if result:
+                        CATEGORY_FOLDER_CACHE['drive'][category_name] = result
+                        print(f"   [✅ GOOGLE DRIVE] {category_name} -> {result} (CREADA)")
+                except Exception as e:
+                    print(f"   [⚠️  GOOGLE DRIVE] {category_name}: {e}")
 
 
 def print_server_welcome():

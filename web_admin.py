@@ -1,8 +1,10 @@
 import os
+import json
 import asyncio
 import threading
 from datetime import datetime
 from flask import Flask, render_template, redirect, url_for, request, flash, Response, stream_with_context
+
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_wtf.csrf import CSRFProtect
@@ -269,21 +271,57 @@ def run_indexer_endpoint():
 @app.route('/run-categorizer', methods=['POST'])
 @login_required
 def run_categorizer_endpoint():
-    """Inicia en background el script de categorización de archivos ya en la nube."""
+    """Inicia en background el script de categorización de archivos ya en la nube con SSE logging."""
+    from queue import Queue
+    from src.scripts.categorize_with_logs import categorize_with_logs
+    
+    if not hasattr(app, 'categorizer_queue'):
+        app.categorizer_queue = Queue()
+    
     def thread_wrapper():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         try:
-            from src.scripts.categorize_existing import main as categorize_main
-            loop.run_until_complete(categorize_main())
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            async def run_categorizer():
+                async for message in categorize_with_logs():
+                    app.categorizer_queue.put(message)
+                app.categorizer_queue.put(None)  # Señal de fin
+            
+            loop.run_until_complete(run_categorizer())
+        except Exception as e:
+            app.categorizer_queue.put(f"[ERROR] {str(e)}")
+            app.categorizer_queue.put(None)
         finally:
             loop.close()
 
     threading.Thread(target=thread_wrapper, daemon=True).start()
-    flash("🗂️ Iniciada categorización de archivos en la nube. Revisa los logs para más detalles.", "info")
-    return redirect(url_for('dashboard'))
+    return {"status": "success", "message": "Categorización iniciada"}, 200
+
+@app.route('/progress-categorizer')
+@login_required
+def progress_categorizer():
+    """SSE endpoint para streaming de logs del categorizer."""
+    def generate():
+        if not hasattr(app, 'categorizer_queue'):
+            yield f"data: {json.dumps({'message': '[INFO] No hay categorización en progreso'})}\n\n"
+            return
+        
+        while True:
+            try:
+                message = app.categorizer_queue.get(timeout=1)
+                if message is None:  # Fin del proceso
+                    yield f"data: {json.dumps({'message': '[FINALIZADO] ✅ Categorización completada'})}\n\n"
+                    break
+                yield f"data: {json.dumps({'message': message})}\n\n"
+            except:
+                # Queue vacío o timeout
+                continue
+    
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
 @app.route('/progress-indexer')
+
 @login_required
 def progress_indexer():
     def generate():

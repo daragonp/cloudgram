@@ -262,18 +262,93 @@
     </div>
 </div>
 
+<!-- MODAL CATEGORIZER -->
+<div class="modal fade" id="categorizerModal" data-bs-backdrop="static" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content bg-dark border-secondary shadow-lg">
+            <div class="modal-header border-secondary text-info">
+                <h5 class="modal-title fw-bold">
+                    🗂️ Consola de Categorización
+                </h5>
+                <button type="button"
+                        class="btn-close btn-close-white"
+                        data-bs-dismiss="modal">
+                </button>
+            </div>
+
+            <div class="modal-body p-4">
+                <div id="categorizerLog"
+                     class="bg-black text-success p-3 rounded mb-3 small font-monospace"
+                     style="height:300px; overflow-y:auto; border:1px solid #30363d; white-space:pre-wrap; color:#00ff41;">
+                </div>
+
+                <p id="categorizerStatus"
+                   class="small text-muted text-center mt-2">
+                    Categorización en progreso...
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+
 
 <script>
 function startCategorizer() {
     const btn = document.getElementById("btnCategorizer");
     btn.disabled = true;
+
+    const modal = new bootstrap.Modal(
+        document.getElementById('categorizerModal')
+    );
+
+    const logConsole = document.getElementById('categorizerLog');
+    const statusText = document.getElementById('categorizerStatus');
+
+    modal.show();
+
+    logConsole.innerHTML =
+        "<span class='text-info'>> [SISTEMA] Iniciando categorización...</span>\n";
+
     fetch("/run-categorizer", { method: "POST" })
+        .then(res => res.json())
         .then(() => {
-            btn.innerText = "🗂️ Empezado…";
-            setTimeout(() => location.reload(), 3000);
+
+            const eventSource =
+                new EventSource("/progress-categorizer");
+
+            eventSource.onmessage = function(event) {
+
+                const data = JSON.parse(event.data);
+                const message = data.message || String(event.data);
+
+                logConsole.innerHTML += `> ${message}\n`;
+                logConsole.scrollTop = logConsole.scrollHeight;
+
+                if (message.includes("FINALIZADO") || message.includes("completada")) {
+                    eventSource.close();
+                    statusText.innerHTML =
+                        "<span class='text-success fw-bold'>✅ Categorización finalizada.</span>";
+
+                    setTimeout(() => {
+                        location.reload();
+                    }, 2500);
+                }
+            };
+
+            eventSource.onerror = function() {
+                eventSource.close();
+                statusText.innerHTML =
+                    "<span class='text-warning fw-bold'>⚠️ Conexión perdida.</span>";
+                btn.disabled = false;
+            };
+
         })
         .catch(err => {
-            console.error(err);
+            logConsole.innerHTML +=
+                `<span class='text-danger'>> [ERROR] ${err}</span>\n`;
+            statusText.innerHTML =
+                "<span class='text-danger fw-bold'>❌ Error en la categorización.</span>";
             btn.disabled = false;
         });
 }
