@@ -108,6 +108,22 @@ async def list_files_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
     
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "🤖 *Ayuda de CloudGram Pro*\n\n"
+        "Comandos principales:\n"
+        "• /start - Menú principal\n"
+        "• /listar - Mostrar archivos recientes\n"
+        "• /buscar <texto> - Buscar por nombre\n"
+        "• /buscar_ia <consulta> - Búsqueda semántica (IA)\n"
+        "• /explorar - Explorar carpetas\n"
+        "• /eliminar <texto> - Eliminar archivos por nombre\n"
+        "• /cancelar - Cancelar acciones en curso\n\n"
+        "También puedes enviar archivos (documentos, fotos, audio, voz).\n"
+        "Al enviar una nota de voz puedes elegir transcribir o subirla y seleccionar la/s nubes donde guardarla."
+    )
+    await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
+    
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = " ".join(context.args)
     if not query:
@@ -238,10 +254,17 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data.pop('parent_folder_id', None)
             
             await status_msg.edit_text(f"✅ Carpeta `{folder_name}` creada y registrada correctamente.")
+            return
             
         except Exception as e:
             print(f"Error creando carpeta: {e}")
             await status_msg.edit_text(f"❌ Error al crear la carpeta: {str(e)}")
+            return
+
+    # Si ninguna de las ramas anteriores coincidió, respondemos con ayuda
+    await update.message.reply_text("❌ No reconozco esa entrada. Aquí tienes la ayuda:")
+    await help_command(update, context)
+    return
 
 # 4. PROCESO DE SUBIDA Y CALLBACKS
 async def upload_process(update, context, target_files_info: list, predefined_embedding=None):
@@ -580,6 +603,7 @@ async def post_init(application):
         BotCommand("listar", "📋 Recientes"),
         BotCommand("buscar", "🔎 Buscar por nombre"),
         BotCommand("eliminar", "🗑️ Borrar archivos")
+        ,BotCommand("help", "🆘 Ayuda")
     ])
 # 7. CARPETAS Y ARCHIVOS (EXPLORADOR)
 
@@ -630,6 +654,7 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("buscar_ia", search_ia_command))
     app.add_handler(CommandHandler("eliminar", delete_command))
     app.add_handler(CommandHandler("explorar", explorar))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(voice_options_callback, pattern="^voice_"))
     app.add_handler(CommandHandler(["cancelar", "salir", "stop"], cancelar_handler))
         
