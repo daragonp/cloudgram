@@ -3,12 +3,15 @@ Diseñado para ser llamado desde web_admin.py con SSE.
 """
 import asyncio
 import dropbox
-from src.init_services import dropbox_svc, drive_svc
+from src.init_services import dropbox_svc, drive_svc, db
 from src.handlers.message_handlers import get_file_category, FILE_CATEGORIES
 
 
 async def categorize_with_logs():
     """Async generator que yield logs de categorización en tiempo real."""
+    
+    # Cargar caché desde BD al inicio
+    category_cache = db.load_category_cache()
     
     yield "[SISTEMA] ✨ Iniciando categorización de archivos..."
     yield "[SISTEMA] Evaluando cache de carpetas..."
@@ -27,6 +30,7 @@ async def categorize_with_logs():
                     paths_stack = [path]
                 
                 all_entries = []
+                errors = []
                 while paths_stack:
                     current_path = paths_stack.pop(0)
                     try:
@@ -38,11 +42,14 @@ async def categorize_with_logs():
                             else:
                                 all_entries.append(entry)
                     except Exception as e:
-                        yield f"[DROPBOX] ⚠️  Error listando {current_path}: {e}"
+                        errors.append(f"[DROPBOX] ⚠️  Error listando {current_path}: {e}")
                 
-                return all_entries
+                return all_entries, errors
             
-            entries = list_dropbox_recursive('')
+            entries, errors = list_dropbox_recursive('')
+            
+            for error in errors:
+                yield error
 
             for entry in entries:
                 name = entry.name
@@ -82,12 +89,13 @@ async def categorize_with_logs():
         files_moved_drive = 0
         
         # Poblar cache de carpetas de categoría
-        from main import CATEGORY_FOLDER_CACHE
         for cat in list(FILE_CATEGORIES.keys()) + ["Otros"]:
-            if cat not in CATEGORY_FOLDER_CACHE['drive']:
+            if cat not in category_cache['drive']:
                 cat_id = await drive_svc.create_folder(cat, parent_id=None)
-                CATEGORY_FOLDER_CACHE['drive'][cat] = cat_id
+                category_cache['drive'][cat] = cat_id
+                db.save_category_folder(cat, 'drive', cat_id)
                 yield f"[DRIVE] 📁 Carpeta de categoría '{cat}' creada/verificada"
+
         
         def list_drive_recursive(folder_id='root', path_name="root"):
             """Lista archivos recursivamente de Google Drive"""
@@ -129,11 +137,12 @@ async def categorize_with_logs():
                 yield f"[DRIVE]    (Otros: no se mueve)"
                 continue
             
-            folder_cat_id = CATEGORY_FOLDER_CACHE['drive'].get(category)
+            folder_cat_id = category_cache['drive'].get(category)
             if not folder_cat_id:
                 yield f"[DRIVE]    ⚠️  Carpeta {category} no en cache, creando..."
                 folder_cat_id = await drive_svc.create_folder(category, parent_id=None)
-                CATEGORY_FOLDER_CACHE['drive'][category] = folder_cat_id
+                category_cache['drive'][category] = folder_cat_id
+                db.save_category_folder(category, 'drive', folder_cat_id)
             
             parents = f.get('parents', []) or []
             if folder_cat_id in parents:

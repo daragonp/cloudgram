@@ -38,6 +38,7 @@ from src.utils.ai_handler import AIHandler
 # ============================================================================
 # guardaremos los ids/paths devueltos por los servicios para no volver a crear
 # una carpeta cada vez que subamos un archivo de la misma categoría.
+# Se carga de la BD y se sincroniza automáticamente.
 CATEGORY_FOLDER_CACHE = {
     'dropbox': {},   # category_name -> path (ej. '/Documentos')
     'drive': {}      # category_name -> folder_id
@@ -49,9 +50,16 @@ CATEGORY_FOLDER_CACHE = {
 async def ensure_category_folders():
     """
     Crea automáticamente las carpetas de categoría en Dropbox y Google Drive
-    si no existen. Se ejecuta al startup del bot y rellena la cache.
+    si no existen. Se ejecuta al startup del bot y rellena la cache desde BD.
     """
+    global CATEGORY_FOLDER_CACHE
+    
     print("\n📁 Inicializando estructura de carpetas por categoría...")
+    
+    # Cargar caché desde BD
+    CATEGORY_FOLDER_CACHE = db.load_category_cache()
+    print(f"   [BDD] Caché cargada: {len(CATEGORY_FOLDER_CACHE['dropbox'])} Dropbox, {len(CATEGORY_FOLDER_CACHE['drive'])} Drive")
+    
     categories = list(FILE_CATEGORIES.keys()) + ["Otros"]
     
     # ========== DROPBOX ==========
@@ -72,7 +80,9 @@ async def ensure_category_folders():
                     result = await dropbox_svc.create_folder(category_name, parent_path="")
                     if result:
                         CATEGORY_FOLDER_CACHE['dropbox'][category_name] = result
+                        db.save_category_folder(category_name, 'dropbox', result)
                         print(f"   [✅ DROPBOX] {category_name} -> {result} (CREADA)")
+
                 except Exception as e:
                     print(f"   [⚠️  DROPBOX] {category_name}: {e}")
             else:
@@ -96,8 +106,9 @@ async def ensure_category_folders():
         
         for category_name in categories:
             if category_name in existing_drives:
-                # Ya existe, guardar en cache
+                # Ya existe, guardar en cache y BD
                 CATEGORY_FOLDER_CACHE['drive'][category_name] = existing_drives[category_name]
+                db.save_category_folder(category_name, 'drive', existing_drives[category_name])
                 print(f"   [✅ GOOGLE DRIVE] {category_name} -> {existing_drives[category_name]} (EXISTENTE)")
             else:
                 # Crear
@@ -105,6 +116,7 @@ async def ensure_category_folders():
                     result = await drive_svc.create_folder(category_name, parent_id=None)
                     if result:
                         CATEGORY_FOLDER_CACHE['drive'][category_name] = result
+                        db.save_category_folder(category_name, 'drive', result)
                         print(f"   [✅ GOOGLE DRIVE] {category_name} -> {result} (CREADA)")
                 except Exception as e:
                     print(f"   [⚠️  GOOGLE DRIVE] {category_name}: {e}")

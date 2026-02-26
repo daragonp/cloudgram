@@ -87,6 +87,19 @@ class DatabaseHandler:
                     )
                 ''')
                 
+                # 4. Tabla de Caché de Carpetas de Categoría
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS category_folder_cache (
+                        id SERIAL PRIMARY KEY,
+                        category_name TEXT NOT NULL,
+                        service TEXT NOT NULL,
+                        cloud_id TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        CONSTRAINT unique_category_service UNIQUE (category_name, service)
+                    )
+                ''')
+
+                
                 # Migración manual por si las columnas no existen en tablas ya creadas
                 try:
                     cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS summary TEXT")
@@ -95,6 +108,56 @@ class DatabaseHandler:
                 except: pass
 
             conn.commit()
+    
+    # --- FUNCIONES DE CACHÉ DE CARPETAS CATEGORÍA ---
+    
+    def save_category_folder(self, category_name, service, cloud_id):
+        """Guarda o actualiza el ID de una carpeta de categoría en la BD."""
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO category_folder_cache (category_name, service, cloud_id)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (category_name, service)
+                        DO UPDATE SET cloud_id = EXCLUDED.cloud_id
+                    """, (category_name, service, cloud_id))
+                conn.commit()
+                return True
+        except Exception as e:
+            print(f"❌ Error guardando caché de carpeta: {e}")
+            return False
+
+    def get_category_folder(self, category_name, service):
+        """Recupera el ID de una carpeta de categoría desde la BD."""
+        try:
+            with self._connect() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("""
+                        SELECT cloud_id FROM category_folder_cache
+                        WHERE category_name = %s AND service = %s
+                    """, (category_name, service))
+                    result = cur.fetchone()
+                    return result['cloud_id'] if result else None
+        except Exception as e:
+            print(f"❌ Error recuperando caché de carpeta: {e}")
+            return None
+
+    def load_category_cache(self):
+        """Carga el caché completo de carpetas desde la BD."""
+        cache = {'dropbox': {}, 'drive': {}}
+        try:
+            with self._connect() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("SELECT category_name, service, cloud_id FROM category_folder_cache")
+                    for row in cur.fetchall():
+                        service = row['service'].lower()
+                        if service in ['dropbox', 'drive']:
+                            cache[service][row['category_name']] = row['cloud_id']
+        except Exception as e:
+            print(f"⚠️  Error cargando caché de carpetas: {e}")
+        return cache
+    
     # --- FUNCIONES DEL BOT ---
     
     def register_file(self, telegram_id, name, f_type, cloud_url, service, content_text=None, embedding=None, folder_id=None, summary=None, technical_description=None):
