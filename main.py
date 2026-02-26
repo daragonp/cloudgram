@@ -123,6 +123,17 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Al enviar una nota de voz puedes elegir transcribir o subirla y seleccionar la/s nubes donde guardarla."
     )
     await update.message.reply_text(help_text)
+
+
+async def unknown_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Maneja comandos no reconocidos y muestra la ayuda al usuario."""
+    try:
+        cmd = update.message.text.split()[0]
+    except Exception:
+        cmd = update.message.text or "(desconocido)"
+
+    await update.message.reply_text(f"❌ Comando desconocido: {cmd}\nUsa /ayuda para ver la lista de comandos disponibles.")
+    await help_command(update, context)
     
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = " ".join(context.args)
@@ -435,6 +446,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data['current_page'] -= 1
         return await send_delete_page(update, context, edit=True)
 
+    # navegación en resultados IA
+    elif data == 'search_page_next':
+        user_data['ia_current_page'] = user_data.get('ia_current_page', 0) + 1
+        return await send_search_page(update, context, edit=True)
+    elif data == 'search_page_prev':
+        user_data['ia_current_page'] = max(0, user_data.get('ia_current_page', 0) - 1)
+        return await send_search_page(update, context, edit=True)
+    elif data == 'search_cancel':
+        user_data.pop('search_results_ia', None)
+        user_data.pop('ia_current_page', None)
+        user_data.pop('ia_items_per_page', None)
+        return await query.edit_message_text("🚫 Búsqueda cancelada.")
+
     # --- LÓGICA DE CANCELACIÓN ---
     elif data == 'cancel_deletion':
         user_data['state'] = None
@@ -470,32 +494,49 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 2. Llamar a la función de búsqueda semántica de la DB (La que actualizamos antes)
         # Debe devolver: id, name, url, similarity, summary, service
-        results = db.search_semantic(query_vector, limit=5)
-        
-        if not results or results[0]['similarity'] < 0.25:
-            # FALLBACK (Punto 2): Si la IA no encuentra nada, buscamos por nombre/tipo
+        raw_results = db.search_semantic(query_vector, limit=20)
+
+        normalized = []
+        # Si la búsqueda semántica no arroja confianza suficiente, fallback por nombre
+        if not raw_results or (isinstance(raw_results, list) and len(raw_results) > 0 and raw_results[0].get('similarity', 1) < 0.25):
             await msg.edit_text("🔄 No hay coincidencias exactas por concepto. Buscando por nombre...")
             tradicional = db.search_by_name(query_text)
             if not tradicional:
                 return await msg.edit_text("😔 No encontré nada, ni siquiera por nombre.")
-            
-            out = f"🔎 *Resultados encontrados por nombre/tipo:*\n\n"
+
             for fid, name, url, service, summary, tech in tradicional:
-                res_txt = f"_{summary}_" if summary else f"Tipo: {tech or 'Archivo'}"
-                out += f"📄 *{name}*\n└ {res_txt}\n🔗 [Abrir]({url})\n\n"
+                normalized.append({
+                    'id': fid,
+                    'name': name,
+                    'url': url,
+                    'service': service,
+                    'summary': summary or (tech or 'Archivo'),
+                    'score': None
+                })
         else:
-            # MOSTRAR RESULTADOS CON RESUMEN (Punto 3)
-            out = "🎯 *Resultados de búsqueda inteligente:*\n\n"
-            for res in results:
-                confianza = int(res['similarity'] * 100)
-                resumen = res['summary'] if res['summary'] else "Sin resumen disponible."
-                out += (
-                    f"📄 *{res['name']}* ({confianza}%)\n"
-                    f"📝 *Resumen:* _{resumen}_\n"
-                    f"☁️ `{res['service'].upper()}` | 🔗 [Ver]({res['url']})\n\n"
-                )
-        
-        await msg.edit_text(out, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+            for res in raw_results:
+                normalized.append({
+                    'id': res.get('id'),
+                    'name': res.get('name'),
+                    'url': res.get('url'),
+                    'service': res.get('service'),
+                    'summary': res.get('summary') or 'Sin resumen disponible.',
+                    'score': res.get('similarity', None)
+                })
+
+        # Guardamos resultados en user_data para paginar
+        user_data['search_results_ia'] = normalized
+        user_data['ia_current_page'] = 0
+        # Ajuste dinámico de items por página: pocos->1, medio->2, muchos->3
+        n = len(normalized)
+        if n <= 5:
+            user_data['ia_items_per_page'] = 1
+        elif n <= 15:
+            user_data['ia_items_per_page'] = 2
+        else:
+            user_data['ia_items_per_page'] = 3
+
+        await send_search_page(update, context)
 
     except Exception as e:
         print(f"❌ ERROR EN BUSQUEDA IA: {e}")
@@ -574,6 +615,45 @@ async def send_delete_page(update, context, edit=False):
             disable_web_page_preview=True
         )
         
+async def send_search_page(update, context, edit=False):
+    """Muestra una página de resultados de `/buscar_ia` almacenados."""
+    user_data = context.user_data
+    results = user_data.get('search_results_ia', [])
+    page = user_data.get('ia_current_page', 0)
+    items_per_page = user_data.get('ia_items_per_page', 1)
+
+    if not results:
+        return await update.effective_chat.send_message("❌ No hay resultados para mostrar.")
+
+    start_idx = page * items_per_page
+    end_idx = start_idx + items_per_page
+    current_items = results[start_idx:end_idx]
+    total_pages = (len(results) + items_per_page - 1) // items_per_page
+
+    text = f"🎯 *Resultados de búsqueda* (Página {page+1}/{total_pages})\n\n"
+    for item in current_items:
+        score = f" ({int(item['score']*100)}%)" if item.get('score') else ""
+        text += f"📄 *{item['name']}*{score}\n"
+        text += f"📝 _{item.get('summary','')}_\n"
+        if item.get('url'):
+            text += f"🔗 [Ver en la nube]({item['url']})\n"
+        text += "\n"
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ Anterior", callback_data="search_page_prev"))
+    if end_idx < len(results):
+        nav_buttons.append(InlineKeyboardButton("Siguiente ➡️", callback_data="search_page_next"))
+
+    keyboard = [nav_buttons] if nav_buttons else []
+    keyboard.append([InlineKeyboardButton("❌ Cancelar", callback_data="search_cancel")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if edit and update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+    else:
+        await update.effective_chat.send_message(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+
 async def execute_full_deletion(fid, name, service, update):
     try:
         # 1. Intentar borrar de la Nube
@@ -659,6 +739,8 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(voice_options_callback, pattern="^voice_"))
     app.add_handler(CommandHandler(["cancelar", "salir", "stop"], cancelar_handler))
+    # Capturar comandos no reconocidos y mostrar ayuda
+    app.add_handler(MessageHandler(filters.COMMAND, unknown_command_handler))
         
     # Manejo de archivos y multimedia
     app.add_handler(MessageHandler(
