@@ -478,6 +478,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Búsqueda Semántica Avanzada (Punto 2 y 3)"""
+    user_data = context.user_data
     if not context.args:
         return await update.message.reply_text("🔎 *Uso:* `/buscar_ia concepto`", parse_mode=ParseMode.MARKDOWN)
     
@@ -633,11 +634,13 @@ async def send_search_page(update, context, edit=False):
     text = f"🎯 *Resultados de búsqueda* (Página {page+1}/{total_pages})\n\n"
     for item in current_items:
         score = f" ({int(item['score']*100)}%)" if item.get('score') else ""
+        text += "────────────────────────\n"
         text += f"📄 *{item['name']}*{score}\n"
         text += f"📝 _{item.get('summary','')}_\n"
         if item.get('url'):
-            text += f"🔗 [Ver en la nube]({item['url']})\n"
+            text += f"🔗 *Enlace:* [Ver en la nube]({item['url']})\n"
         text += "\n"
+    text += "────────────────────────\n"
 
     nav_buttons = []
     if page > 0:
