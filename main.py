@@ -30,8 +30,36 @@ from telegram.error import NetworkError
 from src.init_services import db, dropbox_svc, drive_svc, openai_client 
 
 # 3. IMPORTACIÓN DE HANDLERS
-from src.handlers.message_handlers import start, handle_any_file, show_cloud_menu, explorar, generar_teclado_explorador
+from src.handlers.message_handlers import start, handle_any_file, show_cloud_menu, explorar, generar_teclado_explorador, get_file_category, FILE_CATEGORIES
 from src.utils.ai_handler import AIHandler
+
+# ============================================================================
+# INICIALIZACIÓN DE CARPETAS POR CATEGORÍA
+# ============================================================================
+async def ensure_category_folders():
+    """
+    Crea automáticamente las carpetas de categoría en Dropbox y Google Drive
+    si no existen. Se ejecuta al startup del bot.
+    """
+    print("\n📁 Inicializando estructura de carpetas por categoría...")
+    categories = list(FILE_CATEGORIES.keys()) + ["Otros"]
+    for category_name in categories:
+        # Dropbox
+        try:
+            result = await dropbox_svc.create_folder(category_name, parent_path="")
+            if result:
+                print(f"   [✅ Dropbox] {category_name}")
+        except Exception as e:
+            print(f"   [⚠️  Dropbox] {category_name}: {e}")
+        
+        # Google Drive (root parent=None)
+        try:
+            result = await drive_svc.create_folder(category_name, parent_id=None)
+            if result:
+                print(f"   [✅ Drive] {category_name}")
+        except Exception as e:
+            print(f"   [⚠️  Drive] {category_name}: {e}")
+
 
 def print_server_welcome():
     """
@@ -322,11 +350,20 @@ async def upload_process(update, context, target_files_info: list, predefined_em
         else:
             resumen = f"Documento binario/comprimido ({ext}). No se extrajo texto."
 
+        # NUEVO: Obtener categoría automáticamente
+        category = get_file_category(file_name) or "Otros"
+        
         cloud_links = []
         for cloud in selected_clouds:
             try:
-                # Subir y obtener URL
-                url = await (dropbox_svc.upload(local_path, file_name) if cloud == 'dropbox' else drive_svc.upload(local_path, file_name))
+                # Subir a la carpeta de categoría
+                if cloud == 'dropbox':
+                    url = await dropbox_svc.upload(local_path, file_name, folder=category)
+                else:  # drive
+                    # Buscar/crear la carpeta en Drive
+                    folder_id = await drive_svc.create_folder(category, parent_id=None)
+                    url = await drive_svc.upload(local_path, file_name, folder_id=folder_id) if folder_id else None
+                
                 if url:
                     # AQUÍ ESTÁ EL CAMBIO: Creamos un link Markdown
                     cloud_links.append(f"[✅ {cloud.capitalize()}]({url})")
@@ -770,6 +807,8 @@ async def post_init(application):
         BotCommand("ayuda", "🆘 Ayuda"),
         BotCommand("help", "🆘 Help")
     ])
+    # Inicializar carpetas de categoría en los servicios cloud
+    await ensure_category_folders()
 # 7. CARPETAS Y ARCHIVOS (EXPLORADOR)
 
 async def cambiar_directorio(update, context):

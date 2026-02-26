@@ -19,6 +19,50 @@ ctx = ssl.create_default_context(cafile=certifi.where())
 geopy.geocoders.options.default_ssl_context = ctx
 geolocator = Nominatim(user_agent="cloudgram_bot")
 
+# ============================================================================
+# MAPEO DE CATEGORÍAS: extensión -> carpeta de destino automática
+# ============================================================================
+FILE_CATEGORIES = {
+    'Documentos': {
+        'icon': '📄',
+        'extensions': ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'odt', 'pptx', 'ppt', 'txt', 'rtf', 'ods', 'odp']
+    },
+    'Imágenes': {
+        'icon': '🖼️',
+        'extensions': ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp', 'tiff', 'ico']
+    },
+    'Vídeos': {
+        'icon': '🎥',
+        'extensions': ['mp4', 'avi', 'mov', 'mkv', 'wmv', 'flv', 'webm', 'mpg', 'mpeg', 'm4v']
+    },
+    'Audio': {
+        'icon': '🎵',
+        'extensions': ['mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a', 'opus', 'aiff', 'wma']
+    },
+    'Comprimidos': {
+        'icon': '📦',
+        'extensions': ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'iso', 'dmg']
+    },
+    'Programas': {
+        'icon': '⚙️',
+        'extensions': ['exe', 'msi', 'app', 'deb', 'rpm', 'apk', 'pkg', 'jar']
+    }
+}
+
+def get_file_category(file_name: str) -> str:
+    """
+    Determina la categoría de carpeta para un archivo según su extensión.
+    Retorna el nombre de la carpeta ('Documentos', 'Imágenes', etc.)
+    o None si no encaja en ninguna categoría.
+    """
+    if not file_name:
+        return None
+    ext = file_name.rsplit('.', 1)[-1].lower() if '.' in file_name else ''
+    for category, data in FILE_CATEGORIES.items():
+        if ext in data['extensions']:
+            return category
+    return None
+
 if not os.path.exists("descargas"):
     os.makedirs("descargas")
     
@@ -211,6 +255,11 @@ async def show_cloud_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ed
     selected = user_data.get('selected_clouds', set())
     
     display_name = queue[-1]['name'] if len(queue) == 1 else f"{len(queue)} archivos"
+    
+    # NUEVO: Mostrar la categoría automática asignada
+    first_file = queue[0]['name'] if queue else ""
+    category = get_file_category(first_file) or "Otros"
+    
     dbx_check = "✅" if "dropbox" in selected else "📦"
     drive_check = "✅" if "drive" in selected else "📁"
 
@@ -220,7 +269,7 @@ async def show_cloud_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ed
         [InlineKeyboardButton("🚀 CONFIRMAR SUBIDA", callback_data='confirm_upload')]
     ]
     
-    text = f"📄 *Archivo:* `{display_name.replace('_', ' ')}` \nSelecciona destino:"
+    text = f"📄 *Archivo:* `{display_name.replace('_', ' ')}`\n📁 *Carpeta:* {category} (automático)\n\n¿A qué nube(s)?"
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     if edit and update.callback_query:
