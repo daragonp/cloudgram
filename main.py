@@ -136,21 +136,36 @@ async def unknown_command_handler(update: Update, context: ContextTypes.DEFAULT_
     await help_command(update, context)
     
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Búsqueda simple por nombre con paginación
+    user_data = context.user_data
     query = " ".join(context.args)
     if not query:
         return await update.message.reply_text("🔎 Indica el nombre del archivo.")
-    
-    results = db.search_by_name(query) # Esta función ahora devuelve summary y tech_desc
-    if not results:
+
+    raw = db.search_by_name(query)
+    if not raw:
         return await update.message.reply_text("❌ No encontré archivos con ese nombre.")
-    
-    text = "🔎 *Resultados encontrados:*\n\n"
-    for res in results:
-        # Ajustamos los índices según tu nuevo SELECT de search_by_name: 
-        # id, name, cloud_url, service, summary, technical_description
-        text += f"📄 *{res[1]}*\n🔗 [Enlace]({res[2]}) | {res[3].upper()}\n\n"
-    
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+
+    # Normalizar y deduplicar
+    normalized = []
+    seen = set()
+    for fid, name, url, service, summary, tech in raw:
+        if name in seen:
+            continue
+        seen.add(name)
+        normalized.append({
+            'id': fid,
+            'name': name,
+            'url': url,
+            'service': service,
+            'summary': summary or (tech or 'Archivo')
+        })
+
+    user_data['name_search_results'] = normalized
+    user_data['name_search_page'] = 0
+    user_data['name_items_per_page'] = 3 if len(normalized) > 3 else 1
+
+    await send_name_search_page(update, context)
 
 async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = context.user_data
@@ -459,6 +474,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data.pop('ia_items_per_page', None)
         return await query.edit_message_text("🚫 Búsqueda cancelada.")
 
+    # navegación en resultados por nombre (/buscar)
+    elif data == 'name_search_next':
+        user_data['name_search_page'] = user_data.get('name_search_page', 0) + 1
+        return await send_name_search_page(update, context, edit=True)
+    elif data == 'name_search_prev':
+        user_data['name_search_page'] = max(0, user_data.get('name_search_page', 0) - 1)
+        return await send_name_search_page(update, context, edit=True)
+    elif data == 'name_search_cancel':
+        user_data.pop('name_search_results', None)
+        user_data.pop('name_search_page', None)
+        user_data.pop('name_items_per_page', None)
+        return await query.edit_message_text("🚫 Búsqueda cancelada.")
+
     # --- LÓGICA DE CANCELACIÓN ---
     elif data == 'cancel_deletion':
         user_data['state'] = None
@@ -662,6 +690,47 @@ async def send_search_page(update, context, edit=False):
 
     keyboard = [nav_buttons] if nav_buttons else []
     keyboard.append([InlineKeyboardButton("❌ Cancelar", callback_data="search_cancel")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if edit and update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+    else:
+        await update.effective_chat.send_message(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+
+
+async def send_name_search_page(update, context, edit=False):
+    """Muestra resultados paginados para el comando /buscar (por nombre)."""
+    user_data = context.user_data
+    results = user_data.get('name_search_results', [])
+    page = user_data.get('name_search_page', 0)
+    items_per_page = user_data.get('name_items_per_page', 1)
+
+    if not results:
+        return await update.effective_chat.send_message("❌ No hay resultados para mostrar.")
+
+    start_idx = page * items_per_page
+    end_idx = start_idx + items_per_page
+    current_items = results[start_idx:end_idx]
+    total_pages = (len(results) + items_per_page - 1) // items_per_page
+
+    text = f"🔎 *Resultados por nombre* (Página {page+1}/{total_pages})\n\n"
+    for idx, item in enumerate(current_items, start_idx + 1):
+        num_emoji = f"{idx}️⃣"
+        text += f"{num_emoji} \n"
+        text += f"📄 *{item['name']}* — _{item.get('service','').upper()}_\n"
+        text += f"📝 {item.get('summary','')}\n"
+        if item.get('url'):
+            text += f"🔗 [Abrir en la nube]({item['url']})\n"
+        text += "\n"
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ Anterior", callback_data="name_search_prev"))
+    if end_idx < len(results):
+        nav_buttons.append(InlineKeyboardButton("Siguiente ➡️", callback_data="name_search_next"))
+
+    keyboard = [nav_buttons] if nav_buttons else []
+    keyboard.append([InlineKeyboardButton("❌ Cancelar", callback_data="name_search_cancel")])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if edit and update.callback_query:
