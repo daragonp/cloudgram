@@ -19,6 +19,42 @@ db = DatabaseHandler()
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev_key_only")
 csrf = CSRFProtect(app)
+
+# --- LOGO / FAVICON HANDLING ------------------------------------------------
+# the admin logo may now live inside the static folder (static/logo/logo.JPG)
+# so we look there first, otherwise fall back to the project root. if a
+# source image is found we generate a favicon.ico in the static dir. no
+# additional copying is needed when the file already lives under static.
+possible_sources = [
+    os.path.join(app.static_folder, "logo", "logo.JPG"),
+    os.path.join(os.getcwd(), "logo.JPG")
+]
+source_logo = None
+for p in possible_sources:
+    if os.path.exists(p):
+        source_logo = p
+        break
+
+if source_logo:
+    # ensure a copy exists at static/logo.JPG for backwards compatibility
+    static_root_logo = os.path.join(app.static_folder, "logo.JPG")
+    try:
+        if source_logo != static_root_logo and not os.path.exists(static_root_logo):
+            import shutil
+            shutil.copy(source_logo, static_root_logo)
+    except Exception as e:
+        print(f"⚠️ No se pudo copiar logo al static root: {e}")
+
+    # generate favicon if missing, using the resolved source
+    favicon_path = os.path.join(app.static_folder, "favicon.ico")
+    if not os.path.exists(favicon_path):
+        try:
+            from PIL import Image
+            img = Image.open(source_logo)
+            img.save(favicon_path, format='ICO')
+        except Exception as e:
+            print(f"⚠️ Error generando favicon: {e}")
+
 # --- CONFIGURACIÓN LOGIN ---
 login_manager = LoginManager()
 login_manager.init_app(app)
