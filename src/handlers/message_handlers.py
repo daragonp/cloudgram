@@ -246,66 +246,72 @@ async def voice_options_callback(update: Update, context: ContextTypes.DEFAULT_T
     local_audio = os.path.join("descargas", voice_data['file_name'])
     local_txt = local_audio.replace(".ogg", ".txt")
     
-    # Determinar Nube
-    folder_id = voice_data.get('folder_id')
-    svc = drive_svc if folder_id and not str(folder_id).startswith('/') else dropbox_svc
-    svc_name = "drive" if svc == drive_svc else "dropbox"
-    dest_id = folder_id if svc_name == "drive" else voice_data.get('cloud_id', 'General')
+    # Nota: no determinamos servicio en este punto, solicitaremos
+    # que el usuario seleccione la/s nubes más adelante mediante el menú estándar.
+    folder_id = voice_data.get('folder_id')  # aún se usa cuando registramos en la DB más tarde
 
+    # acción la extraemos antes del try para poder usarla en el finally
+    action = query.data
     try:
-        # 1. Descargar
+        # 1. Descargar el audio para tenerlo local y poder transcribir
         tg_file = await context.bot.get_file(voice_data['file_id'])
         await tg_file.download_to_drive(local_audio)
         
-        action = query.data 
         transcripcion = ""
 
         # 2. Transcribir si es necesario
         if action in ["voice_only_view", "voice_upload_both", "voice_upload_txt"]:
             transcripcion = await AIHandler.transcribe_audio(local_audio)
 
-        # 3. Ejecutar Acción
+        # 3. Si el usuario solo quería ver la transcripción respondemos inmediatamente
         if action == "voice_only_view":
             await query.edit_message_text(f"📝 *Transcripción:* \n\n{transcripcion}", parse_mode="Markdown")
+            # limpiar datos temporales y artefactos locales
+            user_data.pop('temp_voice', None)
+            if os.path.exists(local_audio): os.remove(local_audio)
+            return
 
-        elif action == "voice_upload_audio":
-            url = await svc.upload(local_audio, voice_data['file_name'], dest_id)
-            if url:
-                if isinstance(url, tuple): url = url[0]
-                db.register_file(update.effective_user.id, voice_data['file_name'], "ogg", url, svc_name, folder_id=folder_id)
-                await query.edit_message_text(f"✅ Audio subido a {svc_name.capitalize()}")
+        # 4. Para cualquier acción de subida, agregamos los elementos al menú de subida
+        #    y delegamos el resto al flujo estándar (show_cloud_menu + confirm_upload)
+        if action in ["voice_upload_audio", "voice_upload_txt", "voice_upload_both"]:
+            # preparar la cola de archivos
+            if 'file_queue' not in user_data:
+                user_data['file_queue'] = []
 
-        elif action == "voice_upload_txt":
-            with open(local_txt, "w", encoding="utf-8") as f: f.write(transcripcion)
-            txt_name = voice_data['file_name'].replace(".ogg", ".txt")
-            url = await svc.upload(local_txt, txt_name, dest_id)
-            if url:
-                if isinstance(url, tuple): url = url[0]
-                vector = await AIHandler.get_embedding(transcripcion)
-                db.register_file(update.effective_user.id, txt_name, "txt", url, svc_name, transcripcion, vector, folder_id)
-                await query.edit_message_text(f"✅ Transcripción guardada en {svc_name.capitalize()}")
+            if action in ["voice_upload_audio", "voice_upload_both"]:
+                user_data['file_queue'].append({
+                    'id': voice_data['file_id'],
+                    'name': voice_data['file_name'],
+                    'type': 'audio',
+                    'folder_id': folder_id  # mantener carpeta original
+                })
 
-        elif action == "voice_upload_both":
-            # Subir Audio
-            url_audio = await svc.upload(local_audio, voice_data['file_name'], dest_id)
-            # Subir TXT
-            with open(local_txt, "w", encoding="utf-8") as f: f.write(transcripcion)
-            txt_name = voice_data['file_name'].replace(".ogg", ".txt")
-            url_txt = await svc.upload(local_txt, txt_name, dest_id)
-            
-            if url_audio and url_txt:
-                if isinstance(url_audio, tuple): url_audio = url_audio[0]
-                if isinstance(url_txt, tuple): url_txt = url_txt[0]
-                vector = await AIHandler.get_embedding(transcripcion)
-                db.register_file(update.effective_user.id, voice_data['file_name'], "ogg", url_audio, svc_name, folder_id=folder_id)
-                db.register_file(update.effective_user.id, txt_name, "txt", url_txt, svc_name, transcripcion, vector, folder_id)
-                await query.edit_message_text(f"✅ Audio y Texto guardados en {svc_name.capitalize()}")
+            if action in ["voice_upload_txt", "voice_upload_both"]:
+                # crea el archivo de texto local para que upload_process pueda subirlo
+                with open(local_txt, "w", encoding="utf-8") as f:
+                    f.write(transcripcion)
+                txt_name = voice_data['file_name'].replace(".ogg", ".txt")
+                user_data['file_queue'].append({
+                    'id': voice_data['file_id'],  # no se usará para descargar
+                    'name': txt_name,
+                    'type': 'text',
+                    'folder_id': folder_id
+                })
+
+            # liberamos el objeto temporal de la voz y mostramos el menú de nubes
+            user_data.pop('temp_voice', None)
+            # mostramos el menú de selección de nubes reemplazando el mensaje anterior
+            await show_cloud_menu(update, context, edit=True)
+            return
 
     except Exception as e:
         await query.edit_message_text(f"❌ Error: {str(e)}")
     finally:
-        if os.path.exists(local_audio): os.remove(local_audio)
-        if os.path.exists(local_txt): os.remove(local_txt)
+        # sólo borramos los ficheros locales si no estamos esperando subirlos
+        if action == "voice_only_view":
+            if os.path.exists(local_audio): os.remove(local_audio)
+        # para las opciones de subida dejamos que upload_process se encargue
+        # del borrado una vez que termine.
         user_data.pop('temp_voice', None)
         
 async def explorar(update: Update, context: ContextTypes.DEFAULT_TYPE):

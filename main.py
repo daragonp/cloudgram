@@ -6,7 +6,7 @@ import platform
 import sys
 import numpy as np
 from datetime import datetime
-from dotenv import load_dotenv  # <-- ESTO FALTABA
+from dotenv import load_dotenv
 from src.handlers.message_handlers import voice_options_callback
 
 
@@ -131,7 +131,6 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = user_data.get('state')
 
     # --- LÓGICA 1: ELIMINACIÓN POR ÍNDICE (PERSISTENTE) ---
-    # --- DENTRO DE handle_text_input ---
     if state == 'waiting_delete_selection':
         if text.lower() in ['cancelar', 'terminar', 'salir']:
             user_data['state'] = None
@@ -287,7 +286,7 @@ async def upload_process(update, context, target_files_info: list, predefined_em
                         telegram_id=original_info['id'], name=file_name, f_type=ext,
                         cloud_url=url, service=cloud, content_text=texto,
                         embedding=vector, summary=resumen, technical_description=desc_tec,
-                        folder_id=user_data.get('current_folder_id')
+                        folder_id=original_info.get('folder_id', user_data.get('current_folder_id'))
                     )
             except Exception as e:
                 print(f"Error subiendo a {cloud}: {e}")
