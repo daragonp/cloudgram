@@ -122,7 +122,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "También puedes enviar archivos (documentos, fotos, audio, voz).\n"
         "Al enviar una nota de voz puedes elegir transcribir o subirla y seleccionar la/s nubes donde guardarla."
     )
-    await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(help_text)
     
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = " ".join(context.args)
@@ -602,8 +602,9 @@ async def post_init(application):
         BotCommand("explorar", "📂 Mis Carpetas"),
         BotCommand("listar", "📋 Recientes"),
         BotCommand("buscar", "🔎 Buscar por nombre"),
-        BotCommand("eliminar", "🗑️ Borrar archivos")
-        ,BotCommand("help", "🆘 Ayuda")
+        BotCommand("eliminar", "🗑️ Borrar archivos"),
+        BotCommand("ayuda", "🆘 Ayuda"),
+        BotCommand("help", "🆘 Help")
     ])
 # 7. CARPETAS Y ARCHIVOS (EXPLORADOR)
 
@@ -654,6 +655,7 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("buscar_ia", search_ia_command))
     app.add_handler(CommandHandler("eliminar", delete_command))
     app.add_handler(CommandHandler("explorar", explorar))
+    app.add_handler(CommandHandler("ayuda", help_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(voice_options_callback, pattern="^voice_"))
     app.add_handler(CommandHandler(["cancelar", "salir", "stop"], cancelar_handler))
