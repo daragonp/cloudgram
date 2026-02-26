@@ -273,24 +273,43 @@ def run_indexer_endpoint():
 def run_categorizer_endpoint():
     """Inicia en background el script de categorización de archivos ya en la nube con SSE logging."""
     from queue import Queue
-    from src.scripts.categorize_with_logs import categorize_with_logs
     
     if not hasattr(app, 'categorizer_queue'):
         app.categorizer_queue = Queue()
+    else:
+        # Limpiar queue anterior si existe
+        try:
+            while not app.categorizer_queue.empty():
+                app.categorizer_queue.get_nowait()
+        except:
+            pass
     
     def thread_wrapper():
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            async def run_categorizer():
-                async for message in categorize_with_logs():
-                    app.categorizer_queue.put(message)
-                app.categorizer_queue.put(None)  # Señal de fin
+            async def run_categorizer_async():
+                try:
+                    from src.scripts.categorize_with_logs import categorize_with_logs
+                    async for message in categorize_with_logs():
+                        app.categorizer_queue.put(message)
+                    app.categorizer_queue.put(None)  # Señal de fin
+                except ImportError as e:
+                    app.categorizer_queue.put(f"[ERROR] Importación fallida: {str(e)}")
+                    app.categorizer_queue.put(None)
+                except Exception as e:
+                    import traceback
+                    error_msg = f"[ERROR] {str(e)}"
+                    app.categorizer_queue.put(error_msg)
+                    app.categorizer_queue.put(None)
             
-            loop.run_until_complete(run_categorizer())
+            loop.run_until_complete(run_categorizer_async())
         except Exception as e:
-            app.categorizer_queue.put(f"[ERROR] {str(e)}")
+            import traceback
+            print(f"[ERROR en thread] {str(e)}")
+            traceback.print_exc()
+            app.categorizer_queue.put(f"[ERROR] Fallo en thread: {str(e)}")
             app.categorizer_queue.put(None)
         finally:
             loop.close()
