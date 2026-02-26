@@ -643,14 +643,16 @@ async def send_search_page(update, context, edit=False):
     text = f"🎯 *Resultados de búsqueda* (Página {page+1}/{total_pages})\n\n"
     for idx, item in enumerate(current_items, start_idx + 1):
         score = f" ({int(item['score']*100)}%)" if item.get('score') else ""
-        text += f"{idx}. "
-        text += "────────────────────────\n"
+        # convertir número a emoji (1 -> 1️⃣, 2 -> 2️⃣, ...)
+        num_emoji = f"{idx}️⃣"
+        text += f"{num_emoji} "
+        text += "•—————————————————————\n"
         text += f"📄 *{item['name']}*{score}\n"
         text += f"📝 _{item.get('summary','')}_\n"
         if item.get('url'):
             text += f"🔗 *Enlace:* [Ver en la nube]({item['url']})\n"
         text += "\n"
-    text += "────────────────────────\n"
+    text += "•—————————————————————\n"
 
     nav_buttons = []
     if page > 0:
