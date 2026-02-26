@@ -88,16 +88,19 @@ class DatabaseHandler:
                 ''')
                 
                 # 4. Tabla de Caché de Carpetas de Categoría
-                cur.execute('''
-                    CREATE TABLE IF NOT EXISTS category_folder_cache (
-                        id SERIAL PRIMARY KEY,
-                        category_name TEXT NOT NULL,
-                        service TEXT NOT NULL,
-                        cloud_id TEXT NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        CONSTRAINT unique_category_service UNIQUE (category_name, service)
-                    )
-                ''')
+                try:
+                    cur.execute('''
+                        CREATE TABLE IF NOT EXISTS category_folder_cache (
+                            id SERIAL PRIMARY KEY,
+                            category_name TEXT NOT NULL,
+                            service TEXT NOT NULL,
+                            cloud_id TEXT NOT NULL,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            CONSTRAINT unique_category_service UNIQUE (category_name, service)
+                        )
+                    ''')
+                except Exception as e:
+                    print(f"⚠️  Tabla category_folder_cache ya existe: {e}")
 
                 
                 # Migración manual por si las columnas no existen en tablas ya creadas
