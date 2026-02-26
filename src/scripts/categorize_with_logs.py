@@ -108,7 +108,7 @@ async def categorize_with_logs():
                 
                 while True:
                     resp = svc.files().list(
-                        q=f"'{current_id}' in parents and trashed = false",
+                        q=f"'{current_id}' in parents and trashed=false",
                         spaces="drive",
                         fields="nextPageToken, files(id, name, mimeType, parents)",
                         pageToken=page_token
