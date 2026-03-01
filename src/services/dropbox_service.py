@@ -46,16 +46,12 @@ class DropboxService(CloudService):
             return False
 
     async def get_link(self, cloud_path):
-        """Recupera un link existente o crea uno nuevo"""
+        """Recupera un link privado directamente al visor web de Dropbox"""
         try:
-            res = self.dbx.sharing_list_shared_links(path=cloud_path, direct_only=True)
-            if res.links:
-                return res.links[0].url.replace('?dl=0', '?dl=1')
-            link = self.dbx.sharing_create_shared_link_with_settings(cloud_path)
-            return link.url.replace('?dl=0', '?dl=1')
+            return f"https://www.dropbox.com/preview{cloud_path}"
         except:
             return None
-            
+
     async def list_files(self, path=""):
         if not self.dbx: return []
         try:
@@ -87,18 +83,8 @@ class DropboxService(CloudService):
             with open(local_path, "rb") as f:
                 self.dbx.files_upload(f.read(), cloud_path, mode=WriteMode('overwrite'))
             
-            # Forzamos la obtención del link
-            try:
-                link_metadata = self.dbx.sharing_create_shared_link_with_settings(cloud_path)
-                url = link_metadata.url
-            except Exception:
-                # Si ya existe, lo listamos
-                links = self.dbx.sharing_list_shared_links(path=cloud_path, direct_only=True).links
-                url = links[0].url if links else None
-            
-            if url:
-                return url.replace('?dl=0', '?dl=1')
-            return None
+            # Devolvemos directamente el enlace a la vista privada
+            return f"https://www.dropbox.com/preview{cloud_path}"
         except Exception as e:
             print(f"❌ Error real en Dropbox: {e}")
             return None

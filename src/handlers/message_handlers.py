@@ -87,7 +87,7 @@ async def buscar_ia_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for res in resultados:
                 porcentaje = int(res[3] * 100)
                 texto_respuesta += f"📄 *{res[1]}* ({porcentaje}% coincidencia)\n🔗 [Ver archivo]({res[2]})\n\n"
-            await espera_msg.edit_text(texto_respuesta, parse_mode=ParseMode.MARKDOWN)
+            await espera_msg.edit_text(texto_respuesta, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
         else:
             await espera_msg.edit_text("😔 No encontré nada con ese contexto.")
     except Exception as e:
@@ -225,7 +225,7 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     embedding=vector,
                     folder_id=folder_id
                 )
-                await msg.edit_text(f"✅ *Guardado:* `{file_name}`\n🔗 [Ver en la nube]({url})", parse_mode=ParseMode.MARKDOWN)
+                await msg.edit_text(f"✅ *Guardado:* `{file_name}`\n🔗 [Ver en la nube]({url})", parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
             else:
                 await msg.edit_text("❌ Error al subir a la nube.")
 

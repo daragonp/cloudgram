@@ -197,7 +197,7 @@ async def list_files_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # f[1] es el nombre, f[2] es la url
         text += f"{i}. [{f[1]}]({f[2]}) ({f[3].upper()})\n"
     
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
     
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
@@ -449,7 +449,7 @@ async def upload_process(update, context, target_files_info: list, predefined_em
         final_report.append(f"📄 `{file_name}`\n" + " | ".join(cloud_links))
         if os.path.exists(local_path): os.remove(local_path)
 
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="🚀 *Subida finalizada:*\n\n" + "\n".join(final_report), parse_mode=ParseMode.MARKDOWN)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="🚀 *Subida finalizada:*\n\n" + "\n".join(final_report), parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
