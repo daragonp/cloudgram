@@ -20,7 +20,8 @@ from telegram.ext import (
     MessageHandler, 
     CallbackQueryHandler, 
     filters,
-    ContextTypes
+    ContextTypes,
+    TypeHandler
 )
 from telegram.constants import ParseMode
 from telegram.error import NetworkError
@@ -31,6 +32,7 @@ from src.init_services import db, dropbox_svc, drive_svc, openai_client
 
 # 3. IMPORTACIÓN DE HANDLERS
 from src.handlers.message_handlers import start, handle_any_file, show_cloud_menu, explorar, generar_teclado_explorador, get_file_category, FILE_CATEGORIES
+from src.handlers.auth_handler import auth_middleware
 from src.utils.ai_handler import AIHandler
 
 # ============================================================================
@@ -917,6 +919,9 @@ if __name__ == '__main__':
     
     app = ApplicationBuilder().token(os.getenv("TELEGRAM_BOT_TOKEN")).post_init(post_init).build()
     
+    # Middleware de autorización global (se ejecuta antes que cualquier otro handler)
+    app.add_handler(TypeHandler(Update, auth_middleware), group=-1)
+
     # Comandos principales
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("listar", list_files_command))
