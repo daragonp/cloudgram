@@ -607,6 +607,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📁 *Nueva Carpeta*\nEscribe el nombre que deseas ponerle:",
             parse_mode=ParseMode.MARKDOWN
         )
+        
+    # --- LÓGICA DE EXPLORADOR ---
+    elif data.startswith('exp_svc_'):
+        if data == 'exp_svc_menu':
+            # Volver a selección de nube
+            from src.handlers.message_handlers import explorar
+            context.user_data.pop('explore_service', None)
+            await explorar(update, context)
+        else:
+            # Seleccionó una nube en específico (exp_svc_dropbox o exp_svc_drive)
+            service = data.replace('exp_svc_', '')
+            context.user_data['explore_service'] = service
+            from src.handlers.message_handlers import send_explorer
+            await send_explorer(update, context, folder_id=None)
 # 5. BÚSQUEDA IA Y ELIMINAR
 
 async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -883,25 +897,11 @@ async def cambiar_directorio(update, context):
     query = update.callback_query
     await query.answer()
     
-    # Supongamos que el callback_data es "cd_123"
+    # Supongamos que el callback_data es "cd_123" o "cd_root"
     folder_id = query.data.split('_')[1]
     
-    if folder_id == "root":
-        context.user_data['current_folder_id'] = None
-        context.user_data['current_path_name'] = "Raíz"
-    else:
-        folder = db.get_folder_by_id(folder_id)
-        context.user_data['current_folder_id'] = folder['id']
-        context.user_data['current_path_name'] = folder['name']
-        context.user_data['current_cloud_id'] = folder['cloud_folder_id']
-
-    await query.edit_message_text(
-        f"📂 Estás en: *{context.user_data['current_path_name']}*\n"
-        "Ahora, cualquier archivo que envíes se guardará aquí.",
-        parse_mode='Markdown'
-    )
-
-
+    from src.handlers.message_handlers import send_explorer
+    await send_explorer(update, context, folder_id=None if folder_id == "root" else folder_id)
 async def error_handler(update, context):
     """Maneja errores de red de forma silenciosa si son temporales."""
     if isinstance(context.error, NetworkError):

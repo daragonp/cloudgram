@@ -140,6 +140,20 @@ class GoogleDriveService(CloudService):
         try:
             p_id = parent_id if (parent_id and parent_id != "root") else None
             
+            # PRE-CREATION ALREADY-EXISTS CHECK
+            # Prevent folder duplication by reusing an existing folder if one exists
+            escaped_name = folder_name.replace("'", "\\'")
+            query = f"mimeType='application/vnd.google-apps.folder' and name='{escaped_name}' and trashed=false"
+            if p_id:
+                query += f" and '{p_id}' in parents"
+            else:
+                query += " and 'root' in parents"
+
+            existing_folders = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+            if existing_folders.get('files'):
+                print(f"   [✅ GOOGLE DRIVE] Carpeta '{folder_name}' ya existente encontrada (ID: {existing_folders['files'][0]['id']})")
+                return existing_folders['files'][0]['id']
+            
             metadata = {
                 'name': folder_name,
                 'mimeType': 'application/vnd.google-apps.folder'

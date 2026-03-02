@@ -25,11 +25,11 @@ geolocator = Nominatim(user_agent="cloudgram_bot")
 FILE_CATEGORIES = {
     'Documentos': {
         'icon': '📄',
-        'extensions': ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'odt', 'pptx', 'ppt', 'txt', 'rtf', 'ods', 'odp']
+        'extensions': ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'odt', 'pptx', 'ppt', 'txt', 'rtf', 'ods', 'odp', 'csv', 'md', 'epub', 'pages']
     },
     'Imágenes': {
         'icon': '🖼️',
-        'extensions': ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp', 'tiff', 'ico']
+        'extensions': ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp', 'tiff', 'ico', 'heic', 'raw', 'cr2', 'nef']
     },
     'Vídeos': {
         'icon': '🎥',
@@ -37,15 +37,19 @@ FILE_CATEGORIES = {
     },
     'Audio': {
         'icon': '🎵',
-        'extensions': ['mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a', 'opus', 'aiff', 'wma']
+        'extensions': ['mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a', 'opus', 'aiff', 'wma', 'm3u']
     },
     'Comprimidos': {
         'icon': '📦',
-        'extensions': ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'iso', 'dmg']
+        'extensions': ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'iso', 'dmg', 'tgz']
     },
     'Programas': {
         'icon': '⚙️',
         'extensions': ['exe', 'msi', 'app', 'deb', 'rpm', 'apk', 'pkg', 'jar']
+    },
+    'Código': {
+        'icon': '💻',
+        'extensions': ['py', 'js', 'ts', 'html', 'css', 'json', 'c', 'cpp', 'java', 'go', 'rs', 'sh', 'php', 'sql', 'yaml', 'yml', 'xml']
     }
 }
 
@@ -364,43 +368,48 @@ async def voice_options_callback(update: Update, context: ContextTypes.DEFAULT_T
         user_data.pop('temp_voice', None)
         
 async def explorar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    folder_id = context.args[0] if context.args else None
-    items = db.get_folder_contents(folder_id)
-    nombre_ruta = db.get_folder_by_id(folder_id)['name'] if folder_id else "Raíz"
+    # Initial entry point. Ask for the cloud service first.
+    keyboard = [
+        [InlineKeyboardButton("📦 Dropbox", callback_data="exp_svc_dropbox")],
+        [InlineKeyboardButton("📁 Google Drive", callback_data="exp_svc_drive")]
+    ]
+    await update.message.reply_text(
+        "☁️ *Explorador de Archivos*\nSelecciona la nube que deseas visualizar:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+async def send_explorer(update: Update, context: ContextTypes.DEFAULT_TYPE, folder_id=None):
+    from main import db
+    service = context.user_data.get('explore_service')
+    items = db.get_folder_contents(folder_id, service=service)
+    
+    if folder_id and folder_id != 'root':
+        folder_data = db.get_folder_by_id(folder_id)
+        nombre_ruta = folder_data['name'] if folder_data else "Desconocida"
+    else:
+        nombre_ruta = f"Raíz ({service.capitalize() if service else ''})"
 
     keyboard = []
-    if folder_id:
+    if folder_id and folder_id != 'root':
         parent = db.get_parent_folder(folder_id)
         keyboard.append([InlineKeyboardButton("⬆️ Volver", callback_data=f"cd_{parent['id'] if parent else 'root'}")])
+    else:
+        # At root, providing a way to go back to cloud selection
+        keyboard.append([InlineKeyboardButton("⬆️ Cambiar Nube", callback_data="exp_svc_menu")])
 
     for item in items:
         icon = "📁" if item['type'] == 'folder' else "📄"
         keyboard.append([InlineKeyboardButton(f"{icon} {item['name']}", callback_data=f"{'cd' if item['type']=='folder' else 'info'}_{item['id']}")])
     
-    keyboard.append([InlineKeyboardButton("➕ Crear Carpeta", callback_data=f"mkdir_{folder_id or 'root'}")])
-    await (update.callback_query.edit_message_text if update.callback_query else update.message.reply_text)(
-        f"📂 *Explorador:* `{nombre_ruta}`", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+    # "Crear Carpeta" button removed for pure visualization
     
-def generar_teclado_explorador(folder_id=None):
-    from main import db # Importación local para evitar líos de circularidad
-    items = db.get_folder_contents(folder_id)
-    keyboard = []
+    text = f"📂 *Explorador:* `{nombre_ruta}`"
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Botón para subir de nivel
-    if folder_id:
-        parent = db.get_parent_folder(folder_id) # Asegúrate de tener este método en db_handler
-        parent_id = parent['id'] if parent else "root"
-        keyboard.append([InlineKeyboardButton("⬆️ Volver atrás", callback_data=f"cd_{parent_id}")])
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+    else:
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
 
-    # Listar carpetas primero
-    for item in items:
-        if item['type'] == 'folder':
-            keyboard.append([InlineKeyboardButton(f"📁 {item['name']}", callback_data=f"cd_{item['id']}")])
-        else:
-            keyboard.append([InlineKeyboardButton(f"📄 {item['name']}", callback_data=f"info_{item['id']}")])
-            
-    # Botón de acción
-    keyboard.append([InlineKeyboardButton("➕ Crear Carpeta", callback_data=f"mkdir_{folder_id or 'root'}")])
-            
-    return InlineKeyboardMarkup(keyboard)
-
+# Removed generar_teclado_explorador as it is merged into send_explorer
