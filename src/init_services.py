@@ -15,4 +15,9 @@ dropbox_svc = DropboxService(
     refresh_token=os.getenv("DROPBOX_REFRESH_TOKEN")
 )
 drive_svc = GoogleDriveService()
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Cliente de IA: usa la API de Google Gemini (gratis) con interfaz compatible con OpenAI
+openai_client = OpenAI(
+    api_key=os.getenv("GEMINI_API_KEY"),
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+)

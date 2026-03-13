@@ -4,16 +4,23 @@ from PIL import Image
 import os
 import numpy as np 
 import base64
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Configuración de Gemini via interfaz compatible OpenAI
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 class AIHandler:
     
     @staticmethod
     def _get_client():
-        return OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        return OpenAI(
+            api_key=GEMINI_API_KEY,
+            base_url=GEMINI_BASE_URL
+        )
 
     @staticmethod
     async def get_embedding(text):
@@ -21,7 +28,7 @@ class AIHandler:
         if not text: return None
         client = AIHandler._get_client()
         
-        # Bajamos a 8000 caracteres para asegurar que nunca exceda los 8192 tokens del modelo
+        # Bajamos a 8000 caracteres para asegurar que nunca exceda los tokens del modelo
         MAX_CHARS_SAFE = 8000 
         
         try:
@@ -29,17 +36,17 @@ class AIHandler:
             text = text.replace('\x00', '')
             
             if len(text) <= MAX_CHARS_SAFE:
-                response = client.embeddings.create(input=text, model="text-embedding-3-small")
+                response = client.embeddings.create(input=text, model="text-embedding-004")
                 return response.data[0].embedding
             else:
                 print(f"✂️ Fragmentando texto largo para embedding ({len(text)} chars)...")
                 # Dividimos en trozos seguros
                 chunks = [text[i:i + MAX_CHARS_SAFE] for i in range(0, len(text), MAX_CHARS_SAFE)]
                 
-                # Solo procesamos los primeros 5 trozos para evitar latencia extrema y costos
+                # Solo procesamos los primeros 5 trozos para evitar latencia extrema
                 all_embeddings = []
                 for chunk in chunks[:5]: 
-                    res = client.embeddings.create(input=chunk, model="text-embedding-3-small")
+                    res = client.embeddings.create(input=chunk, model="text-embedding-004")
                     all_embeddings.append(res.data[0].embedding)
                 
                 avg_embedding = np.mean(all_embeddings, axis=0).tolist()
@@ -57,7 +64,7 @@ class AIHandler:
                 base64_image = base64.b64encode(image_file.read()).decode('utf-8')
 
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gemini-2.0-flash",
                 messages=[
                     {
                         "role": "user",
@@ -76,16 +83,29 @@ class AIHandler:
 
     @staticmethod
     async def transcribe_audio(file_path):
-        client = AIHandler._get_client()
+        """Transcribe audio usando la API nativa de Google Gemini (gratis)."""
         try:
-            with open(file_path, "rb") as audio_file:
-                transcript = client.audio.transcriptions.create(
-                    model="whisper-1", 
-                    file=audio_file
-                )
-            return transcript.text
+            import google.generativeai as genai
+            genai.configure(api_key=GEMINI_API_KEY)
+            model = genai.GenerativeModel("gemini-2.0-flash")
+            
+            mime_types = {
+                'ogg': 'audio/ogg', 'mp3': 'audio/mp3',
+                'wav': 'audio/wav', 'mp4': 'audio/mp4', 'm4a': 'audio/mp4'
+            }
+            ext = file_path.lower().split('.')[-1]
+            mime_type = mime_types.get(ext, 'audio/ogg')
+            
+            with open(file_path, "rb") as f:
+                audio_data = f.read()
+            
+            response = model.generate_content([
+                "Transcribe el audio de forma literal y completa. Solo devuelve la transcripción, sin comentarios adicionales.",
+                {"mime_type": mime_type, "data": audio_data}
+            ])
+            return response.text
         except Exception as e:
-            print(f"❌ Error en Whisper: {e}")
+            print(f"❌ Error en transcripción de audio: {e}")
             return ""
 
     @staticmethod
@@ -103,7 +123,6 @@ class AIHandler:
                 text = await AIHandler.transcribe_audio(file_path)
             
             elif ext == 'pdf':
-                # Ya no importamos fitz aquí, ya está arriba
                 with fitz.open(file_path) as doc:
                     text = " ".join([page.get_text() for page in doc])
                 
@@ -128,7 +147,6 @@ class AIHandler:
                     text = f.read()
 
         except Exception as e:
-            # Muy importante: imprimir el error real para debug
             print(f"❌ Error real en extract_text ({ext}): {str(e)}")
             text = f"Error al extraer texto de {ext}"
         
@@ -136,16 +154,18 @@ class AIHandler:
     
     @staticmethod
     async def generate_summary(text):
-        """Genera un resumen ejecutivo del texto para mostrar en búsquedas"""
+        """Genera un resumen ejecutivo del texto para mostrar en búsquedas."""
         try:
-            from openai import AsyncOpenAI
-            client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            client = AsyncOpenAI(
+                api_key=GEMINI_API_KEY,
+                base_url=GEMINI_BASE_URL
+            )
             
             response = await client.chat.completions.create(
-                model="gpt-4o-mini", # Usamos el modelo mini por ahorro y velocidad
+                model="gemini-2.0-flash",
                 messages=[
                     {"role": "system", "content": "Eres un archivista experto. Resume el siguiente texto en máximo 2 frases cortas que describan de qué trata el documento."},
-                    {"role": "user", "content": text[:4000]} # Solo enviamos el inicio para ahorrar tokens
+                    {"role": "user", "content": text[:4000]}
                 ],
                 max_tokens=100
             )

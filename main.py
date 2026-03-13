@@ -165,7 +165,7 @@ def print_server_welcome():
     print("🔑 CHEQUEO DE CREDENCIALES (.env):")
     critical_keys = [
         'TELEGRAM_BOT_TOKEN', 
-        'OPENAI_API_KEY', 
+        'GEMINI_API_KEY', 
         'DROPBOX_APP_KEY',
         'DROPBOX_REFRESH_TOKEN'
     ]
@@ -647,7 +647,7 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 1. Generar Embedding del texto buscado
         response = openai_client.embeddings.create(
             input=[query_text],
-            model="text-embedding-3-small"
+            model="text-embedding-004"
         )
         query_vector = response.data[0].embedding
 
