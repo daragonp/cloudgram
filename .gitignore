@@ -15,6 +15,11 @@ pyvenv.cfg
 credentials.json
 token.json
 
+# --- Claves SSH y Certificados ---
+*.key
+*.pem
+*.pub
+
 # --- Almacenamiento Temporal y Datos ---
 descargas/
 temp/
