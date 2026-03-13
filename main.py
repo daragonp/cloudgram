@@ -31,7 +31,7 @@ from telegram.error import NetworkError
 from src.init_services import db, dropbox_svc, drive_svc, openai_client 
 
 # 3. IMPORTACIÓN DE HANDLERS
-from src.handlers.message_handlers import start, handle_any_file, show_cloud_menu, explorar, generar_teclado_explorador, get_file_category, FILE_CATEGORIES
+from src.handlers.message_handlers import start, handle_any_file, show_cloud_menu, explorar, get_file_category, FILE_CATEGORIES
 from src.handlers.auth_handler import auth_middleware
 from src.utils.ai_handler import AIHandler
 
@@ -609,6 +609,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
     # --- LÓGICA DE EXPLORADOR ---
+    elif data.startswith('exp_page_'):
+        # Format: exp_page_{folder_id}_{page}
+        parts = data.split('_')
+        page = int(parts[-1])
+        folder_id = '_'.join(parts[2:-1])
+        if folder_id == 'root':
+            folder_id = None
+            
+        from src.handlers.message_handlers import send_explorer
+        await send_explorer(update, context, folder_id=folder_id, page=page)
+        
     elif data.startswith('exp_svc_'):
         if data == 'exp_svc_menu':
             # Volver a selección de nube

@@ -371,15 +371,19 @@ async def explorar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Initial entry point. Ask for the cloud service first.
     keyboard = [
         [InlineKeyboardButton("📦 Dropbox", callback_data="exp_svc_dropbox")],
-        [InlineKeyboardButton("📁 Google Drive", callback_data="exp_svc_drive")]
+        [InlineKeyboardButton("📁 Google Drive", callback_data="exp_svc_drive")],
+        [InlineKeyboardButton("❌ Salir", callback_data="cancel_deletion")] # Reusing cancel logic
     ]
-    await update.message.reply_text(
-        "☁️ *Explorador de Archivos*\nSelecciona la nube que deseas visualizar:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.MARKDOWN
-    )
+    
+    text = "☁️ *Explorador de Archivos*\nSelecciona la nube que deseas visualizar:"
+    reply_markup=InlineKeyboardMarkup(keyboard)
+    
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+    else:
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
 
-async def send_explorer(update: Update, context: ContextTypes.DEFAULT_TYPE, folder_id=None):
+async def send_explorer(update: Update, context: ContextTypes.DEFAULT_TYPE, folder_id=None, page=0):
     from main import db
     service = context.user_data.get('explore_service')
     items = db.get_folder_contents(folder_id, service=service)
@@ -390,6 +394,13 @@ async def send_explorer(update: Update, context: ContextTypes.DEFAULT_TYPE, fold
     else:
         nombre_ruta = f"Raíz ({service.capitalize() if service else ''})"
 
+    ITEMS_PER_PAGE = 10
+    total_pages = (len(items) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    
+    page_items = items[start_idx:end_idx]
+
     keyboard = []
     if folder_id and folder_id != 'root':
         parent = db.get_parent_folder(folder_id)
@@ -398,13 +409,27 @@ async def send_explorer(update: Update, context: ContextTypes.DEFAULT_TYPE, fold
         # At root, providing a way to go back to cloud selection
         keyboard.append([InlineKeyboardButton("⬆️ Cambiar Nube", callback_data="exp_svc_menu")])
 
-    for item in items:
+    for item in page_items:
         icon = "📁" if item['type'] == 'folder' else "📄"
         keyboard.append([InlineKeyboardButton(f"{icon} {item['name']}", callback_data=f"{'cd' if item['type']=='folder' else 'info'}_{item['id']}")])
     
     # "Crear Carpeta" button removed for pure visualization
     
+    # Pagination buttons
+    nav_buttons = []
+    nav_folder_id = folder_id if folder_id else 'root'
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ Anterior", callback_data=f"exp_page_{nav_folder_id}_{page - 1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton("Siguiente ➡️", callback_data=f"exp_page_{nav_folder_id}_{page + 1}"))
+    
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+    
     text = f"📂 *Explorador:* `{nombre_ruta}`"
+    if total_pages > 1:
+        text += f" (Pág. {page + 1}/{total_pages})"
+        
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     if update.callback_query:
