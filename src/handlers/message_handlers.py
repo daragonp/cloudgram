@@ -340,12 +340,17 @@ async def voice_options_callback(update: Update, context: ContextTypes.DEFAULT_T
                 })
 
             if action in ["voice_upload_txt", "voice_upload_both"]:
-                # crea el archivo de texto local para que upload_process pueda subirlo
+                # Si la transcripción está vacía por algún motivo, poner un aviso
+                if not transcripcion or not transcripcion.strip():
+                    transcripcion = "[No se pudo generar texto para este audio]"
+                
+                print(f"📄 Guardando transcripción localmente ({len(transcripcion)} chars)...")
                 with open(local_txt, "w", encoding="utf-8") as f:
                     f.write(transcripcion)
+                
                 txt_name = voice_data['file_name'].replace(".ogg", ".txt")
                 user_data['file_queue'].append({
-                    'id': voice_data['file_id'],  # no se usará para descargar
+                    'id': voice_data['file_id'],  # nota: se usará el mismo ID para tracking en DB
                     'name': txt_name,
                     'type': 'text',
                     'folder_id': folder_id

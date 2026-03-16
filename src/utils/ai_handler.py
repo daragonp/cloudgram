@@ -92,13 +92,15 @@ class AIHandler:
     @staticmethod
     async def transcribe_audio(file_path):
         """Transcribe audio usando la API nativa de Google Gemini (gratis)."""
+        log_file = "data/ai_debug.log"
+        if not os.path.exists("data"): os.makedirs("data")
+        
         try:
             import google.generativeai as genai
             from google.generativeai.types import HarmCategory, HarmBlockThreshold
             
             genai.configure(api_key=GEMINI_API_KEY)
             
-            # Configuramos el modelo con filtros de seguridad desactivados para evitar falsos positivos
             model = genai.GenerativeModel(
                 model_name="gemini-2.0-flash",
                 safety_settings={
@@ -109,45 +111,51 @@ class AIHandler:
                 }
             )
             
-            mime_types = {
-                'ogg': 'audio/ogg', # Para notas de voz de Telegram
-                'mp3': 'audio/mp3',
-                'wav': 'audio/wav', 
-                'mp4': 'audio/mp4', 
-                'm4a': 'audio/mp4'
-            }
             ext = file_path.lower().split('.')[-1]
-            # Si es OGG, usamos un MIME type más compatible si es necesario, 
-            # aunque 'audio/ogg' suele ser suficiente para Gemini.
-            mime_type = mime_types.get(ext, 'audio/ogg')
+            mime_type = 'audio/ogg' if ext == 'ogg' else f'audio/{ext}'
+            if ext == 'm4a': mime_type = 'audio/mp4'
             
-            print(f"🎙️ Transcribiendo ({mime_type}): {os.path.basename(file_path)}...")
+            with open(log_file, "a", encoding="utf-8") as log:
+                log.write(f"\n[{datetime.now()}] Transcribiendo: {file_path} (MIME: {mime_type})\n")
             
             with open(file_path, "rb") as f:
                 audio_data = f.read()
             
-            # Usamos un prompt más robusto y pedimos que no sea tan restrictivo
             response = model.generate_content([
                 {
                     "mime_type": mime_type, 
                     "data": audio_data
                 },
                 "Actúa como un transcriptor profesional. Transcribe el contenido de este audio de manera literal y completa. "
-                "Si no hay voz clara, describe brevemente el sonido o indica que no hay contenido hablado. "
-                "Solo devuelve el texto transcrito sin preámbulos ni comentarios."
+                "Si encuentras silencio o música, descríbelo entre corchetes. Solo devuelve la transcripción."
             ])
             
-            if not response.text:
-                print("⚠️ Gemini devolvió una respuesta vacía.")
-                return "No se pudo extraer texto del audio (posible silencio o ruido)."
+            # Verificación exhaustiva de la respuesta
+            if not response.candidates:
+                 with open(log_file, "a") as log: log.write(f"⚠️ Sin candidatos en la respuesta.\n")
+                 return "[La IA no pudo generar una respuesta para este audio]"
+            
+            # Intentar extraer texto de forma segura
+            try:
+                text_result = response.text.strip()
+            except Exception as tex_err:
+                # Si .text falla, puede ser porque fue bloqueado por seguridad a pesar de los settings
+                with open(log_file, "a") as log: log.write(f"⚠️ Error accediendo a .text: {tex_err}\n")
+                if response.candidates[0].finish_reason:
+                    return f"[Error: La IA terminó con estado {response.candidates[0].finish_reason}]"
+                return "[Error al procesar el texto de la respuesta]"
+
+            if not text_result:
+                return "[Audio sin contenido hablado detectable o silencio]"
                 
-            return response.text.strip()
+            with open(log_file, "a", encoding="utf-8") as log: 
+                log.write(f"✅ Éxito. Caracteres: {len(text_result)}\n")
+            return text_result
+
         except Exception as e:
             error_msg = str(e)
-            print(f"❌ Error en transcripción de audio: {error_msg}")
-            # Si el error es de seguridad de Gemini a pesar de los settings
-            if "finish_reason: SAFETY" in error_msg:
-                return "[Error: El contenido fue bloqueado por filtros de seguridad de la IA]"
+            with open(log_file, "a", encoding="utf-8") as log: 
+                log.write(f"❌ ERROR: {error_msg}\n")
             return f"[Error en transcripción: {error_msg}]"
 
     @staticmethod
@@ -161,7 +169,7 @@ class AIHandler:
             if ext in ['jpg', 'jpeg', 'png', 'webp']:
                 text = await AIHandler.analyze_image_vision(file_path)
             
-            elif ext in ['ogg', 'mp3', 'wav', 'mp4', 'm4a']:
+            elif ext in ['ogg', 'mp3', 'wav', 'mp4', 'm4a', 'opus']:
                 text = await AIHandler.transcribe_audio(file_path)
             
             elif ext == 'pdf':

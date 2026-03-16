@@ -479,44 +479,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if "Message is not modified" not in str(e):
                 print(f"Error al refrescar menú: {e}")
 
-    # 3. Lógica para transcribir notas de voz
-    elif data == 'ai_transcribe':
-        queue = user_data.get('file_queue', [])
-        selected_clouds = user_data.get('selected_clouds', set())
-        
-        if not selected_clouds:
-            await query.message.reply_text("⚠️ Selecciona primero una nube de destino.")
-            return
-            
-        if not queue: return
-        
-        f_info = queue[-1]
-        local_audio = os.path.join("descargas", f_info['name'])
-        msg = await query.edit_message_text("🎙️ Transcribiendo audio... por favor espera.")
-        
-        try:
-            # Asegurar descarga
-            tg_f = await context.bot.get_file(f_info['id'])
-            await tg_f.download_to_drive(local_audio)
-            
-            # Procesar IA
-            texto = await AIHandler.transcribe_audio(local_audio)
-            vector = await AIHandler.get_embedding(texto)
-            
-            txt_name = f"Transcrip_{f_info['name'].rsplit('.', 1)[0]}.txt"
-            txt_path = os.path.join("descargas", txt_name)
-            with open(txt_path, "w", encoding="utf-8") as f:
-                f.write(texto)
-            
-            # Subir el archivo de texto resultante
-            await upload_process(update, context, [(txt_path, txt_name, f_info)], predefined_embedding=vector)
-            
-            # Limpieza
-            if os.path.exists(local_audio): os.remove(local_audio)
-            user_data['file_queue'] = [] # Limpiar cola tras éxito
-            await msg.delete()
-        except Exception as e:
-            await query.message.reply_text(f"❌ Error en IA: {e}")
+    # Los callbacks de voz se manejan ahora en src/handlers/message_handlers.py 
+    # mediante voice_options_callback (registrado con el patrón ^voice_)
 
     # 4. Lógica de confirmación de subida estándar
     elif data == 'confirm_upload':
