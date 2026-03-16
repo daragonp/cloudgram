@@ -35,11 +35,15 @@ class AIHandler:
             genai.configure(api_key=GEMINI_API_KEY)
             
             # Limpieza preventiva para evitar errores de codificación en el envío
-            text = text.replace('\x00', '')
+            text = text.replace('\x00', '').strip()
+            if not text: return None
+            
+            # Intentamos usar el modelo más reciente disponible
+            model_name = "models/text-embedding-004"
             
             if len(text) <= MAX_CHARS_SAFE:
                 result = genai.embed_content(
-                    model="models/text-embedding-004",
+                    model=model_name,
                     content=text
                 )
                 return result['embedding']
@@ -52,7 +56,7 @@ class AIHandler:
                 all_embeddings = []
                 for chunk in chunks[:5]: 
                     res = genai.embed_content(
-                        model="models/text-embedding-004",
+                        model=model_name,
                         content=chunk
                     )
                     all_embeddings.append(res['embedding'])
@@ -62,7 +66,13 @@ class AIHandler:
                 
         except Exception as e:
             print(f"❌ Error en Embeddings: {e}")
-            return None
+            # Intentar fallback si el modelo falla
+            try:
+                import google.generativeai as genai
+                result = genai.embed_content(model="models/embedding-001", content=text[:MAX_CHARS_SAFE])
+                return result['embedding']
+            except:
+                return None
 
     @staticmethod
     async def analyze_image_vision(file_path):
@@ -206,6 +216,7 @@ class AIHandler:
     async def generate_summary(text):
         """Genera un resumen ejecutivo del texto para mostrar en búsquedas."""
         try:
+            # Usamos el cliente compatible con OpenAI para resúmenes
             client = AsyncOpenAI(
                 api_key=GEMINI_API_KEY,
                 base_url=GEMINI_BASE_URL
@@ -223,3 +234,39 @@ class AIHandler:
         except Exception as e:
             print(f"Error generando resumen: {e}")
             return "Resumen no disponible."
+
+    @staticmethod
+    async def test_connection():
+        """Prueba la conexión con Gemini y devuelve el estado."""
+        results = {"status": "error", "details": []}
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=GEMINI_API_KEY)
+            
+            # 1. Test Text
+            try:
+                model = genai.GenerativeModel("gemini-1.5-flash-latest") # Usamos alias resiliente
+                resp = model.generate_content("ping")
+                results["details"].append(f"Text (1.5-flash): OK")
+            except Exception as e:
+                results["details"].append(f"Text (1.5-flash): FAIL ({e})")
+                # Fallback to 2.0
+                try:
+                    model = genai.GenerativeModel("gemini-2.0-flash")
+                    resp = model.generate_content("ping")
+                    results["details"].append(f"Text (2.0-flash): OK")
+                except Exception as e2:
+                    results["details"].append(f"Text (2.0-flash): FAIL ({e2})")
+
+            # 2. Test Embedding
+            try:
+                genai.embed_content(model="models/text-embedding-004", content="test")
+                results["details"].append("Embedding (004): OK")
+            except Exception as e:
+                results["details"].append(f"Embedding (004): FAIL ({e})")
+
+            results["status"] = "ok" if "OK" in str(results["details"]) else "partial"
+        except Exception as e:
+            results["details"].append(f"Critical: {e}")
+        
+        return results

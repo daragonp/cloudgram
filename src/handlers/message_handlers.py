@@ -295,18 +295,16 @@ async def voice_options_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.edit_message_text("❌ Error: Datos expirados.")
         return
 
-    await query.edit_message_text("⏳ Procesando nota de voz con IA...")
+    progress_msg = await query.edit_message_text("⏳ Conectando con el cerebro de IA... (Gemini 2.0)")
     local_audio = os.path.join("descargas", voice_data['file_name'])
     local_txt = local_audio.replace(".ogg", ".txt")
     
-    # Nota: no determinamos servicio en este punto, solicitaremos
-    # que el usuario seleccione la/s nubes más adelante mediante el menú estándar.
-    folder_id = voice_data.get('folder_id')  # aún se usa cuando registramos en la DB más tarde
+    if not os.path.exists("descargas"): os.makedirs("descargas")
 
-    # acción la extraemos antes del try para poder usarla en el finally
+    # Acción la extraemos antes del try
     action = query.data
     try:
-        # 1. Descargar el audio para tenerlo local y poder transcribir
+        # 1. Descargar el audio
         tg_file = await context.bot.get_file(voice_data['file_id'])
         await tg_file.download_to_drive(local_audio)
         
@@ -314,19 +312,26 @@ async def voice_options_callback(update: Update, context: ContextTypes.DEFAULT_T
 
         # 2. Transcribir si es necesario
         if action in ["voice_only_view", "voice_upload_both", "voice_upload_txt"]:
+            await progress_msg.edit_text("🎙️ Transcribiendo audio... por favor espera.")
             transcripcion = await AIHandler.transcribe_audio(local_audio)
 
-        # 3. Si el usuario solo quería ver la transcripción respondemos inmediatamente
+        # 3. Si el usuario solo quería ver la transcripción
         if action == "voice_only_view":
-            await query.edit_message_text(f"📝 *Transcripción:* \n\n{transcripcion}", parse_mode="Markdown")
-            # limpiar datos temporales y artefactos locales
+            if "[Error" in transcripcion:
+                await progress_msg.edit_text(f"❌ *Error en la transcripción:*\n\n{transcripcion}", parse_mode="Markdown")
+            else:
+                await progress_msg.edit_text(f"📝 *Transcripción:* \n\n{transcripcion}", parse_mode="Markdown")
+            
+            # Limpiar
             user_data.pop('temp_voice', None)
             if os.path.exists(local_audio): os.remove(local_audio)
             return
 
         # 4. Para cualquier acción de subida, agregamos los elementos al menú de subida
-        #    y delegamos el resto al flujo estándar (show_cloud_menu + confirm_upload)
         if action in ["voice_upload_audio", "voice_upload_txt", "voice_upload_both"]:
+            # Recuuperar folder_id (necesario si se usa)
+            f_id_from_data = voice_data.get('folder_id')
+            
             # preparar la cola de archivos
             if 'file_queue' not in user_data:
                 user_data['file_queue'] = []
@@ -336,24 +341,22 @@ async def voice_options_callback(update: Update, context: ContextTypes.DEFAULT_T
                     'id': voice_data['file_id'],
                     'name': voice_data['file_name'],
                     'type': 'audio',
-                    'folder_id': folder_id  # mantener carpeta original
+                    'folder_id': f_id_from_data
                 })
 
             if action in ["voice_upload_txt", "voice_upload_both"]:
-                # Si la transcripción está vacía por algún motivo, poner un aviso
                 if not transcripcion or not transcripcion.strip():
                     transcripcion = "[No se pudo generar texto para este audio]"
                 
-                print(f"📄 Guardando transcripción localmente ({len(transcripcion)} chars)...")
                 with open(local_txt, "w", encoding="utf-8") as f:
                     f.write(transcripcion)
                 
                 txt_name = voice_data['file_name'].replace(".ogg", ".txt")
                 user_data['file_queue'].append({
-                    'id': voice_data['file_id'],  # nota: se usará el mismo ID para tracking en DB
+                    'id': voice_data['file_id'],
                     'name': txt_name,
                     'type': 'text',
-                    'folder_id': folder_id
+                    'folder_id': f_id_from_data
                 })
 
             # liberamos el objeto temporal de la voz y mostramos el menú de nubes
@@ -363,13 +366,11 @@ async def voice_options_callback(update: Update, context: ContextTypes.DEFAULT_T
             return
 
     except Exception as e:
-        await query.edit_message_text(f"❌ Error: {str(e)}")
+        await progress_msg.edit_text(f"❌ Error crítico: {str(e)}")
     finally:
         # sólo borramos los ficheros locales si no estamos esperando subirlos
         if action == "voice_only_view":
             if os.path.exists(local_audio): os.remove(local_audio)
-        # para las opciones de subida dejamos que upload_process se encargue
-        # del borrado una vez que termine.
         user_data.pop('temp_voice', None)
         
 async def explorar(update: Update, context: ContextTypes.DEFAULT_TYPE):
