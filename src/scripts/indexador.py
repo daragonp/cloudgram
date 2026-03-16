@@ -145,6 +145,9 @@ async def _indexar_si_falta(name, servicio, reporte, progreso_callback=None):
         
         reporte['nuevos'] += 1
         if progreso_callback: await progreso_callback(f"✅ Registrado: {name}")
+        
+        # Pausa para evitar exceder el límite de 15 peticiones/min de Gemini Free Tier
+        await asyncio.sleep(4.5)
 
     except Exception as e:
         error_msg = str(e)

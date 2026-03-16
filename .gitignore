@@ -36,3 +36,4 @@ __pycache__/
 .idea/
 .DS_Store
 .local
+oracle_key/

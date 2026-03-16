@@ -26,18 +26,23 @@ class AIHandler:
     async def get_embedding(text):
         """Convierte texto en un vector. Maneja fragmentación real para evitar errores de context length."""
         if not text: return None
-        client = AIHandler._get_client()
         
         # Bajamos a 8000 caracteres para asegurar que nunca exceda los tokens del modelo
         MAX_CHARS_SAFE = 8000 
         
         try:
+            import google.generativeai as genai
+            genai.configure(api_key=GEMINI_API_KEY)
+            
             # Limpieza preventiva para evitar errores de codificación en el envío
             text = text.replace('\x00', '')
             
             if len(text) <= MAX_CHARS_SAFE:
-                response = client.embeddings.create(input=text, model="text-embedding-004")
-                return response.data[0].embedding
+                result = genai.embed_content(
+                    model="models/text-embedding-004",
+                    content=text
+                )
+                return result['embedding']
             else:
                 print(f"✂️ Fragmentando texto largo para embedding ({len(text)} chars)...")
                 # Dividimos en trozos seguros
@@ -46,8 +51,11 @@ class AIHandler:
                 # Solo procesamos los primeros 5 trozos para evitar latencia extrema
                 all_embeddings = []
                 for chunk in chunks[:5]: 
-                    res = client.embeddings.create(input=chunk, model="text-embedding-004")
-                    all_embeddings.append(res.data[0].embedding)
+                    res = genai.embed_content(
+                        model="models/text-embedding-004",
+                        content=chunk
+                    )
+                    all_embeddings.append(res['embedding'])
                 
                 avg_embedding = np.mean(all_embeddings, axis=0).tolist()
                 return avg_embedding
@@ -86,27 +94,61 @@ class AIHandler:
         """Transcribe audio usando la API nativa de Google Gemini (gratis)."""
         try:
             import google.generativeai as genai
+            from google.generativeai.types import HarmCategory, HarmBlockThreshold
+            
             genai.configure(api_key=GEMINI_API_KEY)
-            model = genai.GenerativeModel("gemini-2.0-flash")
+            
+            # Configuramos el modelo con filtros de seguridad desactivados para evitar falsos positivos
+            model = genai.GenerativeModel(
+                model_name="gemini-2.0-flash",
+                safety_settings={
+                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                }
+            )
             
             mime_types = {
-                'ogg': 'audio/ogg', 'mp3': 'audio/mp3',
-                'wav': 'audio/wav', 'mp4': 'audio/mp4', 'm4a': 'audio/mp4'
+                'ogg': 'audio/ogg', # Para notas de voz de Telegram
+                'mp3': 'audio/mp3',
+                'wav': 'audio/wav', 
+                'mp4': 'audio/mp4', 
+                'm4a': 'audio/mp4'
             }
             ext = file_path.lower().split('.')[-1]
+            # Si es OGG, usamos un MIME type más compatible si es necesario, 
+            # aunque 'audio/ogg' suele ser suficiente para Gemini.
             mime_type = mime_types.get(ext, 'audio/ogg')
+            
+            print(f"🎙️ Transcribiendo ({mime_type}): {os.path.basename(file_path)}...")
             
             with open(file_path, "rb") as f:
                 audio_data = f.read()
             
+            # Usamos un prompt más robusto y pedimos que no sea tan restrictivo
             response = model.generate_content([
-                "Transcribe el audio de forma literal y completa. Solo devuelve la transcripción, sin comentarios adicionales.",
-                {"mime_type": mime_type, "data": audio_data}
+                {
+                    "mime_type": mime_type, 
+                    "data": audio_data
+                },
+                "Actúa como un transcriptor profesional. Transcribe el contenido de este audio de manera literal y completa. "
+                "Si no hay voz clara, describe brevemente el sonido o indica que no hay contenido hablado. "
+                "Solo devuelve el texto transcrito sin preámbulos ni comentarios."
             ])
-            return response.text
+            
+            if not response.text:
+                print("⚠️ Gemini devolvió una respuesta vacía.")
+                return "No se pudo extraer texto del audio (posible silencio o ruido)."
+                
+            return response.text.strip()
         except Exception as e:
-            print(f"❌ Error en transcripción de audio: {e}")
-            return ""
+            error_msg = str(e)
+            print(f"❌ Error en transcripción de audio: {error_msg}")
+            # Si el error es de seguridad de Gemini a pesar de los settings
+            if "finish_reason: SAFETY" in error_msg:
+                return "[Error: El contenido fue bloqueado por filtros de seguridad de la IA]"
+            return f"[Error en transcripción: {error_msg}]"
 
     @staticmethod
     async def extract_text(file_path):
