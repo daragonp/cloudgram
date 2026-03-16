@@ -2,7 +2,7 @@ name: Deploy Cloudgram
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   deploy:
@@ -17,5 +17,6 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             cd /home/ubuntu/apps/cloudgram
-            git pull origin main
+            git fetch origin
+            git reset --hard origin/main
             sudo systemctl restart cloudgram
