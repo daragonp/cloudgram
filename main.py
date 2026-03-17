@@ -611,9 +611,6 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("🤖 Consultando mi base neuronal con Gemini...")
     
     try:
-        # 1. Generar Embedding del texto buscado usando AIHandler (GEMINI NATIVO)
-        # ANTES (INCORRECTO): openai_client.embeddings.create() - NO FUNCIONA CON GEMINI
-        # AHORA (CORRECTO): AIHandler.get_embedding() - USA API NATIVA DE GEMINI
         query_vector = await AIHandler.get_embedding(query_text)
         
         if not query_vector:
@@ -886,6 +883,7 @@ async def cambiar_directorio(update, context):
     
     from src.handlers.message_handlers import send_explorer
     await send_explorer(update, context, folder_id=None if folder_id == "root" else folder_id)
+
 async def error_handler(update, context):
     """Maneja errores de red de forma silenciosa si son temporales."""
     if isinstance(context.error, NetworkError):
@@ -893,8 +891,6 @@ async def error_handler(update, context):
         print(f"⚠️ Error de red temporal en Telegram: {context.error}")
     else:
         print(f"❌ Error crítico: {context.error}")
-
-
 
 if __name__ == '__main__':
     print_server_welcome()

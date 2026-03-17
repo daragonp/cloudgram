@@ -32,8 +32,8 @@ class AIHandler:
     """
     
     # Modelos disponibles en orden de preferencia
-    EMBEDDING_MODELS = ["text-embedding-004", "embedding-001"]
-    CHAT_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"]
+    EMBEDDING_MODELS = ["gemini-embedding-001", "gemini-embedding-2-preview"]
+    CHAT_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-flash-lite"]
     
     @staticmethod
     def _get_client():
