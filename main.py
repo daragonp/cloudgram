@@ -599,30 +599,36 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 5. BÚSQUEDA IA Y ELIMINAR
 
 async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Búsqueda Semántica Avanzada (Punto 2 y 3)"""
+    """
+    Búsqueda Semántica Avanzada usando Gemini Embeddings.
+    CORREGIDO: Usa AIHandler.get_embedding() en lugar de openai_client
+    """
     user_data = context.user_data
     if not context.args:
         return await update.message.reply_text("🔎 *Uso:* `/buscar_ia concepto`", parse_mode=ParseMode.MARKDOWN)
     
     query_text = " ".join(context.args)
-    msg = await update.message.reply_text("🤖 Consultando mi base neuronal...")
+    msg = await update.message.reply_text("🤖 Consultando mi base neuronal con Gemini...")
     
     try:
-        # 1. Generar Embedding del texto buscado
-        response = openai_client.embeddings.create(
-            input=[query_text],
-            model="text-embedding-004"
-        )
-        query_vector = response.data[0].embedding
+        # 1. Generar Embedding del texto buscado usando AIHandler (GEMINI NATIVO)
+        # ANTES (INCORRECTO): openai_client.embeddings.create() - NO FUNCIONA CON GEMINI
+        # AHORA (CORRECTO): AIHandler.get_embedding() - USA API NATIVA DE GEMINI
+        query_vector = await AIHandler.get_embedding(query_text)
+        
+        if not query_vector:
+            return await msg.edit_text("❌ Error generando embedding. Verifica tu API key de Gemini.")
 
-        # 2. Llamar a la función de búsqueda semántica de la DB (La que actualizamos antes)
-        # Debe devolver: id, name, url, similarity, summary, service
+        # 2. Llamar a la función de búsqueda semántica de la DB
         raw_results = db.search_semantic(query_vector, limit=20)
 
         normalized = []
         seen_names = set()
-        # aplicar umbral para similitud y eliminar duplicados
+        
+        # Aplicar umbral para similitud y eliminar duplicados
+        # NOTA: El umbral puede necesitar ajuste debido al cambio de dimensiones
         semantic = [r for r in raw_results if r.get('similarity', 0) >= 0.2]
+        
         if not semantic:
             await msg.edit_text("🔄 No hay coincidencias relevantes por concepto. Buscando por nombre...")
             tradicional = db.search_by_name(query_text)
@@ -659,7 +665,8 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Guardamos resultados en user_data para paginar
         user_data['search_results_ia'] = normalized
         user_data['ia_current_page'] = 0
-        # Ajuste dinámico de items por página: pocos->1, medio->2, muchos->3
+        
+        # Ajuste dinámico de items por página
         n = len(normalized)
         if n <= 5:
             user_data['ia_items_per_page'] = 1
@@ -672,7 +679,9 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         print(f"❌ ERROR EN BUSQUEDA IA: {e}")
-        await msg.edit_text("⚠️ Hubo un error procesando la búsqueda.")
+        import traceback
+        traceback.print_exc()
+        await msg.edit_text(f"⚠️ Hubo un error procesando la búsqueda: {str(e)}")
 
 async def cancelar_handler(update, context):
     """Limpia cualquier estado y responde con éxito"""
