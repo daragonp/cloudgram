@@ -1,65 +1,41 @@
 {% extends 'base.html' %}
 
-{% block content %}
-<style>
-    .hero-section {
-        padding: 100px 0;
-        background: radial-gradient(circle at top right, #003366, #0b0e14);
-        border-radius: 20px;
-        margin-bottom: 50px;
-    }
-    .text-cyan { color: #00d4ff; }
-    .btn-cloudgram {
-        background: linear-gradient(90deg, #00d4ff, #007cf0);
-        color: white;
-        border: none;
-        padding: 12px 30px;
-        font-weight: bold;
-        transition: 0.3s;
-    }
-    .btn-cloudgram:hover {
-        transform: scale(1.05);
-        color: white;
-        box-shadow: 0 0 20px rgba(0, 212, 255, 0.4);
-    }
-    .feature-card {
-        background: #161b22;
-        border: 1px solid #30363d;
-        transition: 0.3s;
-    }
-    .feature-card:hover { border-color: #00d4ff; }
-</style>
-
-<div class="hero-section text-center px-4 shadow-lg">
-    <h1 class="display-3 fw-bold">Gestiona tu Nube con <span class="text-cyan">Inteligencia</span></h1>
-    <p class="lead text-light opacity-75 mx-auto" style="max-width: 700px;">
-        CloudGram une la potencia de Telegram con Dropbox y Google Drive, permitiéndote organizar y encontrar archivos usando lenguaje natural.
-    </p>
-    <div class="mt-4">
-        <a href="https://t.me/TuBotUser" class="btn btn-cloudgram btn-lg rounded-pill shadow">EMPEZAR AHORA</a>
+{% block guest_content %}
+<div class="row align-items-center w-100 m-0">
+    <div class="col-lg-6 mb-5 mb-lg-0 text-center text-lg-start pe-lg-5">
+        <h1 class="display-3 fw-bolder mb-3" style="letter-spacing: -1px;">
+            Gestiona tu Nube con <span style="color: var(--accent);">Inteligencia</span>
+        </h1>
+        <p class="lead text-light opacity-75 mb-5" style="font-size: 1.15rem; max-width: 600px; margin: 0 auto; margin-lg-start: 0;">
+            CloudGram une la potencia de Telegram con Dropbox y Google Drive, permitiéndote organizar y encontrar archivos usando lenguaje natural.
+        </p>
+        <a href="https://t.me/TuBotUser" target="_blank" class="btn btn-accent btn-lg px-5 py-3 rounded-pill shadow-lg d-inline-flex align-items-center gap-2" style="font-size: 1.1rem;">
+            <i class="bi bi-telegram fs-4"></i> Iniciar Bot
+        </a>
     </div>
-</div>
-
-<div class="row g-4 py-5">
-    <div class="col-md-4">
-        <div class="card h-100 p-4 feature-card shadow-sm border-secondary">
-            <div class="fs-1 mb-3">🔍</div>
-            <h4 class="text-cyan">Búsqueda IA</h4>
-            <p class="text-white-50">No busques por nombre, busca por contexto: <strong>"buscar_ia Imágenes en donde aparecen gatos"</strong> y deja que la IA la encuentre por ti.</p>
-        </div>
-    </div>
-    <div class="col-md-4">
-        <div class="card h-100 p-4 feature-card shadow-sm border-secondary">
-            <div class="fs-1 mb-3">🎙️</div>
-            <h4 class="text-cyan">Transcripción</h4>
-            <p class="text-white-50">Envía audios y recibe la transcripción automática directa a tu base de datos y servicios de nube.</p>
-        </div>
-    </div>
-    <div class="col-md-4">
-        <div class="card h-100 p-4 feature-card shadow-sm border-secondary">
-            <div class="fs-1 mb-3">☁️</div>
-            <h4 class="text-cyan">Multi-Nube</h4>
-            <p class="text-white-50">Sincronización instantánea entre Dropbox y Drive sin salir de tu chat de Telegram.</p>
+    <div class="col-lg-6">
+        <div class="row g-4">
+            <div class="col-sm-6">
+                <div class="glass-panel p-4 h-100 text-center text-sm-start border-top-0 border-end-0 border-bottom-0" style="border-left: 3px solid #00e5ff;">
+                    <i class="bi bi-robot fs-1 text-cyan mb-3 d-block" style="color: #00e5ff;"></i>
+                    <h5 class="fw-bold mb-3">Búsqueda Semántica</h5>
+                    <p class="text-white-50 small mb-0">No busques por nombre, busca por contexto y deja que la IA la encuentre por ti.</p>
+                </div>
+            </div>
+            <div class="col-sm-6">
+                <div class="glass-panel p-4 h-100 text-center text-sm-start border-top-0 border-end-0 border-bottom-0" style="border-left: 3px solid #a855f7;">
+                    <i class="bi bi-mic fs-1 mb-3 d-block" style="color: #a855f7;"></i>
+                    <h5 class="fw-bold mb-3">Transcripción</h5>
+                    <p class="text-white-50 small mb-0">Envía audios y recibe la transcripción automática directa a base de datos y nubes.</p>
+                </div>
+            </div>
+            <div class="col-12 mt-2">
+                <div class="glass-panel p-4 h-100 text-center text-sm-start border-top-0 border-end-0 border-bottom-0" style="border-left: 3px solid #3b82f6;">
+                    <i class="bi bi-cloud-check fs-1 mb-3 d-block" style="color: #3b82f6;"></i>
+                    <h5 class="fw-bold mb-3">Sincronización Multi-Nube</h5>
+                    <p class="text-white-50 small mb-0">Gestión instantánea entre Dropbox y Drive sin salir de tu chat de Telegram.</p>
+                </div>
+            </div>
         </div>
     </div>
 </div>

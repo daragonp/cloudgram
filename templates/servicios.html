@@ -1,0 +1,89 @@
+{% extends 'base.html' %}
+
+{% block title %}Servicios{% endblock %}
+{% block breadcrumb %}Estado de Servicios{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in">
+    <h1 class="page-title">Estado de Servicios</h1>
+    <p class="page-subtitle">Monitoreo de todos los servicios conectados</p>
+</div>
+
+<div class="card fade-in">
+    <div class="card-header">
+        <h3 class="card-title">
+            <i data-lucide="server"></i>
+            Servicios de Almacenamiento
+        </h3>
+    </div>
+    <div class="card-body" style="padding: 0;">
+        <div class="service-item">
+            <div class="service-info">
+                <div class="service-icon">
+                    <i data-lucide="database"></i>
+                </div>
+                <div class="service-details">
+                    <h4>Base de Datos PostgreSQL</h4>
+                    <p>Railway / Supabase - Conexion principal</p>
+                </div>
+            </div>
+            <span class="status-badge {{ 'online' if db_status else 'offline' }}">
+                {{ 'ONLINE' if db_status else 'OFFLINE' }}
+            </span>
+        </div>
+
+        <div class="service-item">
+            <div class="service-info">
+                <div class="service-icon">
+                    <i data-lucide="hard-drive"></i>
+                </div>
+                <div class="service-details">
+                    <h4>Google Drive API</h4>
+                    <p>OAuth2 - Almacenamiento en la nube</p>
+                </div>
+            </div>
+            <span class="status-badge {{ 'online' if drive_status else 'offline' }}">
+                {{ 'CONECTADO' if drive_status else 'ERROR' }}
+            </span>
+        </div>
+
+        <div class="service-item">
+            <div class="service-info">
+                <div class="service-icon">
+                    <i data-lucide="cloud"></i>
+                </div>
+                <div class="service-details">
+                    <h4>Dropbox API</h4>
+                    <p>OAuth2 - Almacenamiento en la nube</p>
+                </div>
+            </div>
+            <span class="status-badge {{ 'online' if dropbox_status else 'offline' }}">
+                {{ 'CONECTADO' if dropbox_status else 'ERROR' }}
+            </span>
+        </div>
+    </div>
+</div>
+
+<div class="card fade-in" style="margin-top: 20px;">
+    <div class="card-header">
+        <h3 class="card-title">
+            <i data-lucide="sparkles"></i>
+            Servicios de IA
+        </h3>
+    </div>
+    <div class="card-body" style="padding: 0;">
+        <div class="service-item">
+            <div class="service-info">
+                <div class="service-icon" style="background: rgba(0, 212, 255, 0.1);">
+                    <i data-lucide="brain" style="color: var(--cyan);"></i>
+                </div>
+                <div class="service-details">
+                    <h4>Google Gemini API</h4>
+                    <p>Chat, Vision, Embeddings</p>
+                </div>
+            </div>
+            <span class="status-badge online">DISPONIBLE</span>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -103,6 +103,18 @@ class DatabaseHandler:
                     print(f"⚠️  Tabla category_folder_cache ya existe: {e}")
 
                 
+                # 5. Tabla de Logs del Sistema
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS bot_logs (
+                        id SERIAL PRIMARY KEY,
+                        level VARCHAR(20) NOT NULL,
+                        module VARCHAR(100),
+                        message TEXT NOT NULL,
+                        metadata JSONB,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+
                 # Migración manual por si las columnas no existen en tablas ya creadas
                 try:
                     cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS summary TEXT")
@@ -111,7 +123,54 @@ class DatabaseHandler:
                 except: pass
 
             conn.commit()
+            
+    # --- FUNCIONES DE LOGS DEL SISTEMA ---
     
+    def log_event(self, level, module, message, metadata=None):
+        """Registra un evento en la base de datos (logs)."""
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    # En SQLite no existe JSONB, usamos TEXT para metadata como compatibilidad cruzada básico
+                    # Sin embargo, usamos Postgres primariamente.
+                    meta_str = json.dumps(metadata) if metadata else None
+                    cur.execute("""
+                        INSERT INTO bot_logs (level, module, message, metadata)
+                        VALUES (%s, %s, %s, %s)
+                    """, (level, module, message, meta_str))
+                    conn.commit()
+        except Exception as e:
+            print(f"❌ Error guardando log: {e}")
+
+    def get_logs(self, limit=100, level=None, module=None, start_date=None, end_date=None):
+        """Obtiene logs con filtros opcionales."""
+        try:
+            with self._connect() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    query = "SELECT * FROM bot_logs WHERE 1=1"
+                    params = []
+                    
+                    if level and level != 'ALL':
+                        query += " AND level = %s"
+                        params.append(level)
+                    if module:
+                        query += " AND module = %s"
+                        params.append(module)
+                    if start_date:
+                        query += " AND created_at >= %s"
+                        params.append(start_date)
+                    if end_date:
+                        query += " AND created_at <= %s"
+                        params.append(end_date)
+                        
+                    query += f" ORDER BY created_at DESC LIMIT {int(limit)}"
+                    
+                    cur.execute(query, tuple(params))
+                    return cur.fetchall()
+        except Exception as e:
+            print(f"❌ Error recuperando logs: {e}")
+            return []
+
     # --- FUNCIONES DE CACHÉ DE CARPETAS CATEGORÍA ---
     
     def save_category_folder(self, category_name, service, cloud_id):
@@ -215,12 +274,25 @@ class DatabaseHandler:
             print(f"❌ Error en search_by_name: {e}")
             return []
         
-    def search_semantic(self, query_embedding, limit=5):
-        """Búsqueda vectorial con cálculo de similitud."""
+    def search_semantic(self, query_embedding, limit=5, file_types=None):
+        """Búsqueda vectorial con cálculo de similitud y soporte de filtros de tipo de archivo."""
         try:
             with self._connect() as conn:
                 with conn.cursor() as cur:
-                    cur.execute('SELECT id, name, cloud_url, embedding, summary, service FROM files WHERE embedding IS NOT NULL')
+                    query = 'SELECT id, name, cloud_url, embedding, summary, service FROM files WHERE embedding IS NOT NULL'
+                    params = []
+                    
+                    if file_types and isinstance(file_types, list) and len(file_types) > 0:
+                        type_conditions = []
+                        for ft in file_types:
+                            ft_clean = ft.replace('.', '').strip().lower()
+                            type_conditions.append(f"name ILIKE %s OR type ILIKE %s")
+                            params.extend([f"%.{ft_clean}%", f"%{ft_clean}%"])
+                            
+                        if type_conditions:
+                            query += f" AND ({' OR '.join(type_conditions)})"
+                            
+                    cur.execute(query, tuple(params) if params else None)
                     all_files = cur.fetchall()
                 
                 results = []
@@ -290,6 +362,36 @@ class DatabaseHandler:
             with conn.cursor() as cur:
                 cur.execute("UPDATE files SET embedding = NULL WHERE embedding IN ('error_limit', '[]')")
             conn.commit()
+
+    def reset_all_embeddings(self):
+        """Reinicia TODOS los archivos (borra resúmenes y embeddings) para un recálculo desde cero."""
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE files SET embedding = NULL, summary = NULL, content_text = NULL")
+                conn.commit()
+        except Exception as e:
+            print(f"❌ Error al resetear toda la DB: {e}")
+
+    def clean_corrupted_files(self):
+        """Blanquea solo los archivos cuyo analysis IA falló guardando mensajes de error en base de datos."""
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE files 
+                        SET content_text = NULL, summary = NULL, embedding = NULL
+                        WHERE content_text LIKE 'Error: %' 
+                           OR summary LIKE 'Resumen no disponible%'
+                           OR content_text LIKE 'Error al extraer%'
+                           OR content_text LIKE '[Error en transcripci%'
+                    """)
+                    affected = cur.rowcount
+                conn.commit()
+                return affected
+        except Exception as e:
+            print(f"❌ Error al limpiar archivos corruptos: {e}")
+            return 0
 
     def check_connection(self):
         try:

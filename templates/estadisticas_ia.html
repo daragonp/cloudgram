@@ -1,0 +1,267 @@
+{% extends 'base_new.html' %}
+
+{% block title %}Estadisticas IA{% endblock %}
+{% block breadcrumb %}Estadisticas IA{% endblock %}
+
+{% block content %}
+<!-- Page Header -->
+<div class="page-header fade-in">
+    <h1 class="page-title">Centro de Estadisticas de IA</h1>
+    <p class="page-subtitle">Metricas de rendimiento del sistema de inteligencia artificial</p>
+</div>
+
+<!-- AI Stats Grid -->
+<div class="stats-grid fade-in">
+    <div class="stat-card success">
+        <div class="stat-header">
+            <div class="stat-icon">
+                <i data-lucide="brain"></i>
+            </div>
+            <div class="stat-trend up">
+                <i data-lucide="trending-up" style="width: 14px; height: 14px;"></i>
+                95.2%
+            </div>
+        </div>
+        <div class="stat-value">{{ total_ia | default(0) }}</div>
+        <div class="stat-label">Embeddings Generados</div>
+        <div class="stat-progress">
+            <div class="stat-progress-bar" style="width: 95%"></div>
+        </div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-header">
+            <div class="stat-icon">
+                <i data-lucide="mic"></i>
+            </div>
+            <div class="stat-trend up">
+                <i data-lucide="trending-up" style="width: 14px; height: 14px;"></i>
+                +8
+            </div>
+        </div>
+        <div class="stat-value">127</div>
+        <div class="stat-label">Transcripciones Completadas</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-header">
+            <div class="stat-icon">
+                <i data-lucide="eye"></i>
+            </div>
+        </div>
+        <div class="stat-value">{{ total_fotos | default(0) }}</div>
+        <div class="stat-label">Imagenes Analizadas</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-header">
+            <div class="stat-icon">
+                <i data-lucide="zap"></i>
+            </div>
+        </div>
+        <div class="stat-value">1.2s</div>
+        <div class="stat-label">Latencia Promedio</div>
+    </div>
+</div>
+
+<!-- AI Models Status -->
+<div class="card fade-in" style="margin-bottom: 24px;">
+    <div class="card-header">
+        <h3 class="card-title">
+            <i data-lucide="cpu"></i>
+            Estado de Modelos Gemini
+        </h3>
+        <span class="status-badge online">Todos Operativos</span>
+    </div>
+    <div class="card-body" style="padding: 0;">
+        <div class="service-item">
+            <div class="service-info">
+                <div class="service-icon" style="background: rgba(0, 212, 255, 0.1);">
+                    <i data-lucide="message-square" style="color: var(--cyan);"></i>
+                </div>
+                <div class="service-details">
+                    <h4>gemini-2.5-flash</h4>
+                    <p>Chat, Vision y Analisis - Modelo Principal</p>
+                </div>
+            </div>
+            <span class="status-badge online">DISPONIBLE</span>
+        </div>
+
+        <div class="service-item">
+            <div class="service-info">
+                <div class="service-icon" style="background: rgba(40, 167, 69, 0.1);">
+                    <i data-lucide="vector-triangle" style="color: var(--success);"></i>
+                </div>
+                <div class="service-details">
+                    <h4>gemini-embedding-001</h4>
+                    <p>Embeddings de Texto - 768 dimensiones</p>
+                </div>
+            </div>
+            <span class="status-badge online">DISPONIBLE</span>
+        </div>
+
+        <div class="service-item">
+            <div class="service-info">
+                <div class="service-icon" style="background: rgba(40, 167, 69, 0.1);">
+                    <i data-lucide="vector-triangle" style="color: var(--success);"></i>
+                </div>
+                <div class="service-details">
+                    <h4>gemini-embedding-2-preview</h4>
+                    <p>Embeddings Avanzados - Backup</p>
+                </div>
+            </div>
+            <span class="status-badge online">DISPONIBLE</span>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row -->
+<div class="grid-2 fade-in" style="margin-bottom: 24px;">
+    <!-- Embeddings Chart -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">
+                <i data-lucide="bar-chart-3"></i>
+                Embeddings por Dia
+            </h3>
+        </div>
+        <div class="card-body">
+            <div class="chart-container">
+                <canvas id="embeddingsChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Response Time Chart -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">
+                <i data-lucide="timer"></i>
+                Tiempo de Respuesta
+            </h3>
+        </div>
+        <div class="card-body">
+            <div class="chart-container">
+                <canvas id="responseTimeChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- AI Categories -->
+<div class="card fade-in">
+    <div class="card-header">
+        <h3 class="card-title">
+            <i data-lucide="tags"></i>
+            Categorias Detectadas por IA
+        </h3>
+    </div>
+    <div class="card-body">
+        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px;">
+            <div style="padding: 16px; background: var(--primary-dark); border-radius: 8px; border: 1px solid var(--border-color); text-align: center;">
+                <div style="font-size: 1.5rem; font-weight: 700; color: var(--cyan);">45</div>
+                <div style="font-size: 0.8rem; color: var(--text-muted);">Documentos</div>
+            </div>
+            <div style="padding: 16px; background: var(--primary-dark); border-radius: 8px; border: 1px solid var(--border-color); text-align: center;">
+                <div style="font-size: 1.5rem; font-weight: 700; color: var(--success);">32</div>
+                <div style="font-size: 0.8rem; color: var(--text-muted);">Imagenes</div>
+            </div>
+            <div style="padding: 16px; background: var(--primary-dark); border-radius: 8px; border: 1px solid var(--border-color); text-align: center;">
+                <div style="font-size: 1.5rem; font-weight: 700; color: var(--warning);">18</div>
+                <div style="font-size: 0.8rem; color: var(--text-muted);">Audios</div>
+            </div>
+            <div style="padding: 16px; background: var(--primary-dark); border-radius: 8px; border: 1px solid var(--border-color); text-align: center;">
+                <div style="font-size: 1.5rem; font-weight: 700; color: var(--danger);">12</div>
+                <div style="font-size: 0.8rem; color: var(--text-muted);">Videos</div>
+            </div>
+            <div style="padding: 16px; background: var(--primary-dark); border-radius: 8px; border: 1px solid var(--border-color); text-align: center;">
+                <div style="font-size: 1.5rem; font-weight: 700; color: var(--text-secondary);">8</div>
+                <div style="font-size: 0.8rem; color: var(--text-muted);">Comprimidos</div>
+            </div>
+            <div style="padding: 16px; background: var(--primary-dark); border-radius: 8px; border: 1px solid var(--border-color); text-align: center;">
+                <div style="font-size: 1.5rem; font-weight: 700; color: var(--text-secondary);">5</div>
+                <div style="font-size: 0.8rem; color: var(--text-muted);">Codigo</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Embeddings Chart
+        const embeddingsCtx = document.getElementById('embeddingsChart').getContext('2d');
+        new Chart(embeddingsCtx, {
+            type: 'bar',
+            data: {
+                labels: ['Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab', 'Dom'],
+                datasets: [{
+                    label: 'Embeddings',
+                    data: [25, 32, 28, 45, 38, 22, 35],
+                    backgroundColor: 'rgba(0, 212, 255, 0.6)',
+                    borderColor: '#00d4ff',
+                    borderWidth: 1,
+                    borderRadius: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(48, 54, 61, 0.5)' },
+                        ticks: { color: '#8b949e' }
+                    },
+                    y: {
+                        grid: { color: 'rgba(48, 54, 61, 0.5)' },
+                        ticks: { color: '#8b949e' },
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+
+        // Response Time Chart
+        const responseCtx = document.getElementById('responseTimeChart').getContext('2d');
+        new Chart(responseCtx, {
+            type: 'line',
+            data: {
+                labels: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00'],
+                datasets: [{
+                    label: 'Latencia (ms)',
+                    data: [800, 1200, 1500, 1800, 1400, 900],
+                    borderColor: '#28a745',
+                    backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                    tension: 0.4,
+                    fill: true,
+                    pointBackgroundColor: '#28a745',
+                    pointBorderColor: '#0d1117',
+                    pointBorderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(48, 54, 61, 0.5)' },
+                        ticks: { color: '#8b949e' }
+                    },
+                    y: {
+                        grid: { color: 'rgba(48, 54, 61, 0.5)' },
+                        ticks: { color: '#8b949e' },
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+    });
+</script>
+{% endblock %}

@@ -125,10 +125,12 @@ async def _indexar_si_falta(name, servicio, reporte, progreso_callback=None):
                 # Punto 2: Fallback para archivos sin texto (ZIP, EXE, etc.)
                 resumen = f"Archivo tipo .{extension} indexado por nombre. Sin contenido de texto extraíble."
                 desc_tecnica = f"Contenedor/Binario {extension.upper()}"
+                texto_limpio = None
         
         except Exception as ai_err:
             print(f"⚠️ IA saltada para {name}: {ai_err}")
             resumen = f"Archivo .{extension} registrado (Análisis IA no disponible)."
+            texto_limpio = None
         # 3. Registro en DB con las nuevas columnas
         # Asegúrate de que tu db.register_file acepte estos nuevos argumentos
         db.register_file(
@@ -168,6 +170,186 @@ async def _indexar_si_falta(name, servicio, reporte, progreso_callback=None):
 async def ejecutar_indexacion_completa():
     """Versión asíncrona principal para el hilo."""
     return await procesar_archivos_viejos()
+
+
+async def procesar_un_archivo_core(fid, name, servicio, cloud_url, content_text, log_callback):
+    """
+    Procesamiento atómico de un solo archivo (Download -> Extract -> Summary -> Embedding -> DB Update).
+    """
+    async def log(msg):
+        if log_callback:
+            await log_callback(msg)
+    
+    extension = name.split('.')[-1].lower() if '.' in name else 'desconocido'
+    
+    try:
+        texto_limpio = None
+        resumen = None
+        vector = None
+
+        # CASO A: Ya tenemos el texto en la BD → solo generar embedding y resumen
+        if content_text and len(content_text.strip()) > 20:
+            texto_limpio = limpiar_y_recortar_texto(content_text)
+            await log(f"   ↳ Usando content_text existente ({len(texto_limpio)} chars)")
+        else:
+            # CASO B: Sin texto → intentar descargar y analizar
+            await log(f"   ↳ Sin content_text, descargando para análisis IA...")
+            local_path = os.path.join("descargas", name)
+            if not os.path.exists("descargas"):
+                os.makedirs("descargas")
+
+            success = False
+            file_missing = False
+            try:
+                if servicio == 'dropbox':
+                    try:
+                        success = await dropbox_svc.download_file(f"/{name}", local_path)
+                    except Exception as e:
+                        if "not_found" in str(e).lower():
+                            file_missing = True
+                        raise e
+                elif servicio == 'drive':
+                    success = await drive_svc.download_file_by_name(name, local_path)
+                    if not success:
+                        file_missing = True
+            except Exception as dl_err:
+                await log(f"   ⚠️ Error descargando {name}: {dl_err}")
+
+            if file_missing:
+                await log(f"   🚫 Archivo no encontrado en la nube. Marcando como huérfano.")
+                with db._connect() as conn2:
+                    with conn2.cursor() as cur2:
+                        cur2.execute("UPDATE files SET embedding = 'error_missing_in_cloud' WHERE id = %s", (fid,))
+                    conn2.commit()
+                return False
+
+            if success and os.path.exists(local_path):
+                try:
+                    await log(f"   🧠 Extrayendo texto ({extension})...")
+                    texto = await AIHandler.extract_text(local_path)
+                    texto_limpio = limpiar_y_recortar_texto(texto)
+                except Exception as ai_err:
+                    await log(f"   ⚠️ Error IA: {ai_err}")
+                finally:
+                    try: os.remove(local_path)
+                    except: pass
+        
+        # Generar embedding + resumen si tenemos texto
+        if texto_limpio and len(texto_limpio.strip()) > 20:
+            await log(f"   🤖 Generando resumen y embedding...")
+            resumen, vector = await asyncio.gather(
+                AIHandler.generate_summary(texto_limpio),
+                AIHandler.get_embedding(texto_limpio)
+            )
+        else:
+            resumen = f"Archivo .{extension} sin contenido de texto extraíble."
+            texto_limpio = None
+
+        if vector:
+            import json as _json
+            import numpy as _np
+            emb_str = _json.dumps(vector.tolist() if isinstance(vector, _np.ndarray) else vector)
+            with db._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE files
+                        SET embedding = %s,
+                            summary   = COALESCE(%s, summary),
+                            content_text = COALESCE(%s, content_text)
+                        WHERE id = %s
+                    """, (emb_str, resumen, texto_limpio, fid))
+                conn.commit()
+            await log(f"   ✅ Embedding guardado ({len(vector)} dims)")
+            return True
+        else:
+            await log(f"   ⚠️ No se pudo generar embedding para {name}")
+            return False
+
+    except Exception as e:
+        await log(f"   ❌ Error en {name}: {e}")
+        return False
+
+
+async def generar_embeddings_pendientes(limite: int, progreso_callback=None):
+    """
+    Genera embeddings para archivos que YA están en la BD pero sin embedding.
+    """
+    async def log(msg):
+        print(f"[EMBED] {msg}")
+        if progreso_callback:
+            await progreso_callback(msg)
+
+    await log(f"🔍 Buscando archivos sin embedding{' (TODOS)' if limite == 0 else f' (máx. {limite})'}...")
+
+    try:
+        with db._connect() as conn:
+            with conn.cursor() as cur:
+                sql = """
+                    SELECT id, name, service, cloud_url, content_text
+                    FROM files
+                    WHERE embedding IS NULL OR embedding IN ('', '[]', 'error_limit')
+                    ORDER BY created_at DESC
+                """
+                if limite > 0:
+                    sql += f" LIMIT {int(limite)}"
+                cur.execute(sql)
+                pendientes = cur.fetchall()
+    except Exception as e:
+        await log(f"❌ Error consultando BD: {e}")
+        return {"procesados": 0, "errores": 0}
+
+    total = len(pendientes)
+    await log(f"📋 Encontrados: {total} archivos pendientes.")
+
+    if total == 0:
+        await log("✅ No hay archivos pendientes. ¡Todo indexado!")
+        return {"procesados": 0, "errores": 0}
+
+    reporte = {"procesados": 0, "errores": 0}
+
+    for i, (fid, name, servicio, cloud_url, content_text) in enumerate(pendientes, 1):
+        await log(f"[{i}/{total}] Procesando: {name} ({servicio})")
+        
+        ok = await procesar_un_archivo_core(fid, name, servicio, cloud_url, content_text, log)
+        if ok:
+            reporte["procesados"] += 1
+        else:
+            reporte["errores"] += 1
+
+        # Pausa para respetar rate-limit de Gemini Free Tier
+        await asyncio.sleep(4)
+
+    await log(f"🏁 Completado: {reporte['procesados']} embeddings generados, {reporte['errores']} errores.")
+    return reporte
+
+
+async def ejecutar_embeddings_batch_sse(limite: int):
+    """
+    Generador asíncrono para SSE streaming del proceso de embeddings por lotes.
+    Yields strings en formato 'data: mensaje\\n\\n'
+    """
+    yield "data: 5\n\n"
+    yield f"data: 🧠 Iniciando generación de embeddings (lote: {'TODOS' if limite == 0 else limite})...\n\n"
+
+    queue = asyncio.Queue()
+
+    async def callback(msg):
+        await queue.put(msg)
+
+    task = asyncio.create_task(generar_embeddings_pendientes(limite, callback))
+
+    while not task.done() or not queue.empty():
+        try:
+            msg = await asyncio.wait_for(queue.get(), timeout=1.0)
+            yield f"data: {msg}\n\n"
+            yield "data: 50\n\n"
+        except asyncio.TimeoutError:
+            continue
+
+    resultado = await task
+    yield f"data: ✅ Finalizado: {resultado['procesados']} generados, {resultado['errores']} errores.\n\n"
+    yield "data: 100\n\n"
+
 
 async def ejecutar_indexacion_paso_a_paso():
     """

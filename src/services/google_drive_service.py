@@ -106,34 +106,44 @@ class GoogleDriveService(CloudService):
         
     async def upload(self, local_path, file_name, folder_id=None):
             service = self._get_service()
-            try:
-                # Si folder_id es "root" o vacío, lo tratamos como None
-                p_id = folder_id if (folder_id and folder_id != "root") else None
-                
-                file_metadata = {'name': file_name}
-                if p_id:
-                    file_metadata['parents'] = [p_id]
-                    
-                media = MediaFileUpload(local_path, resumable=True)
-                file = service.files().create(
-                    body=file_metadata, 
-                    media_body=media, 
-                    fields='id, webViewLink'
-                ).execute()
+            import time as _time
+            intentos = 3
+            error_last = None
 
-                # Permisos públicos para que el link funcione
+            for i in range(intentos):
                 try:
-                    service.permissions().create(
-                        fileId=file.get('id'),
-                        body={'type': 'anyone', 'role': 'reader'}
+                    # Si folder_id es "root" o vacío, lo tratamos como None
+                    p_id = folder_id if (folder_id and folder_id != "root") else None
+                    
+                    file_metadata = {'name': file_name}
+                    if p_id:
+                        file_metadata['parents'] = [p_id]
+                        
+                    media = MediaFileUpload(local_path, resumable=True)
+                    file = service.files().create(
+                        body=file_metadata, 
+                        media_body=media, 
+                        fields='id, webViewLink'
                     ).execute()
-                except: pass
 
-                # RETORNO ÚNICO: Solo el string del link
-                return file.get('webViewLink')
-            except Exception as e:
-                print(f"❌ Error Drive Upload: {e}")
-                return None
+                    # Permisos públicos
+                    try:
+                        service.permissions().create(
+                            fileId=file.get('id'),
+                            body={'type': 'anyone', 'role': 'reader'}
+                        ).execute()
+                    except: pass
+
+                    return file.get('webViewLink')
+
+                except (BrokenPipeError, ConnectionResetError, Exception) as e:
+                    error_last = e
+                    print(f"⚠️ [Intento {i+1}/{intentos}] Error Drive Upload ({file_name}): {e}")
+                    if i < intentos - 1:
+                        _time.sleep(2 * (i + 1)) # Backoff simple
+
+            print(f"❌ Error final Drive Upload tras {intentos} intentos: {error_last}")
+            return None
 
     async def create_folder(self, folder_name, parent_id=None):
         service = self._get_service()

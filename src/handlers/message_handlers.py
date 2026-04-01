@@ -373,22 +373,6 @@ async def voice_options_callback(update: Update, context: ContextTypes.DEFAULT_T
             if os.path.exists(local_audio): os.remove(local_audio)
         user_data.pop('temp_voice', None)
         
-async def explorar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Initial entry point. Ask for the cloud service first.
-    keyboard = [
-        [InlineKeyboardButton("📦 Dropbox", callback_data="exp_svc_dropbox")],
-        [InlineKeyboardButton("📁 Google Drive", callback_data="exp_svc_drive")],
-        [InlineKeyboardButton("❌ Salir", callback_data="cancel_deletion")] # Reusing cancel logic
-    ]
-    
-    text = "☁️ *Explorador de Archivos*\nSelecciona la nube que deseas visualizar:"
-    reply_markup=InlineKeyboardMarkup(keyboard)
-    
-    if update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
-    else:
-        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
-
 async def send_explorer(update: Update, context: ContextTypes.DEFAULT_TYPE, folder_id=None, page=0):
     from main import db
     service = context.user_data.get('explore_service')

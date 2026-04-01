@@ -125,7 +125,7 @@ class AIHandler:
     @staticmethod
     async def analyze_image_vision(file_path):
         """
-        Analiza una imagen usando Gemini Vision.
+        Analiza una imagen usando Gemini Vision (cliente ASÍNCRONO).
         
         Args:
             file_path: Ruta al archivo de imagen
@@ -133,7 +133,8 @@ class AIHandler:
         Returns:
             str: Descripción de la imagen o mensaje de error
         """
-        client = AIHandler._get_client()
+        # IMPORTANTE: Usar cliente ASÍNCRONO para no bloquear el event loop
+        client = AIHandler._get_async_client()
         
         # Detectar tipo de imagen
         ext = file_path.lower().split('.')[-1]
@@ -150,10 +151,10 @@ class AIHandler:
             with open(file_path, "rb") as image_file:
                 base64_image = base64.b64encode(image_file.read()).decode('utf-8')
 
-            # Intentar con diferentes modelos de chat
+            # Intentar con diferentes modelos de chat (await porque es async)
             for model in AIHandler.CHAT_MODELS:
                 try:
-                    response = client.chat.completions.create(
+                    response = await client.chat.completions.create(
                         model=model,
                         messages=[
                             {
@@ -161,7 +162,12 @@ class AIHandler:
                                 "content": [
                                     {
                                         "type": "text", 
-                                        "text": "Describe esta imagen detalladamente. Si hay texto, transcríbelo completo. Clasifícala en una categoría (factura, viaje, chat, documento, recibo, foto personal, etc). Responde en español."
+                                        "text": (
+                                            "Analiza esta imagen y responde en español con un único bloque de texto (sin formato markdown ni títulos). "
+                                            "Incluye: (1) descripción visual completa del contenido, (2) cualquier texto visible transcrito literalmente, "
+                                            "(3) categoría del archivo (factura, viaje, chat, documento, recibo, foto personal, captura de pantalla, etc.). "
+                                            "Sé exhaustivo y completo."
+                                        )
                                     },
                                     {
                                         "type": "image_url", 
@@ -172,20 +178,21 @@ class AIHandler:
                                 ],
                             }
                         ],
-                        max_tokens=500
+                        max_tokens=1500
                     )
                     result = response.choices[0].message.content
-                    logger.info(f"✅ Imagen analizada con {model}")
+                    logger.info(f"✅ Imagen analizada con {model}: {len(result)} chars")
                     return result
                 except Exception as model_error:
                     logger.warning(f"⚠️ Modelo {model} falló para visión: {model_error}")
                     continue
             
-            return "Error: No se pudo analizar la imagen con ningún modelo disponible."
+            logger.warning("No se pudo analizar la imagen con ningún modelo disponible.")
+            return ""
             
         except Exception as e:
             logger.error(f"❌ Error en Visión IA: {e}")
-            return f"Error en análisis de visión: {str(e)}"
+            return ""
 
     @staticmethod
     async def transcribe_audio(file_path):
@@ -288,14 +295,14 @@ class AIHandler:
             error_msg = "No se pudo transcribir el audio con ningún modelo disponible."
             with open(log_file, "a", encoding="utf-8") as log:
                 log.write(f"❌ Todos los modelos fallaron\n")
-            return f"[{error_msg}]"
+            return ""
 
         except Exception as e:
             error_msg = str(e)
             with open(log_file, "a", encoding="utf-8") as log:
                 log.write(f"❌ ERROR CRÍTICO: {error_msg}\n")
             logger.error(f"❌ Error en transcripción: {error_msg}")
-            return f"[Error en transcripción: {error_msg}]"
+            return ""
 
     @staticmethod
     async def extract_text(file_path):
@@ -360,7 +367,7 @@ class AIHandler:
 
         except Exception as e:
             logger.error(f"❌ Error real en extract_text ({ext}): {str(e)}")
-            text = f"Error al extraer texto de {ext}: {str(e)}"
+            text = ""
         
         return text.replace('\x00', '').strip()
     
@@ -472,3 +479,70 @@ class AIHandler:
             int: Número de dimensiones (768 para Gemini)
         """
         return 768  # text-embedding-004 produce embeddings de 768 dimensiones
+        
+    @staticmethod
+    async def analyze_search_intent(query_text):
+        """
+        Usa LLM para entender la intención de búsqueda del usuario y separar 
+        filtros duros (como tipo de archivo) de la búsqueda semántica.
+        
+        Returns:
+            dict: {"semantic_query": "texto a vectorizar", "file_types": ["pdf", "docx", ...]}
+        """
+        try:
+            client = AIHandler._get_async_client()
+            
+            system_prompt = """
+            Eres un asistente de búsqueda en una base de datos de archivos. 
+            El usuario ingresará una consulta en español coloquial.
+            Tu tarea es extraer:
+            1. 'semantic_query': La idea semántica o contenido real que el usuario busca (sin mencionar el formato).
+            2. 'file_types': Una lista de extensiones de archivo explícitas o implícitas en la consulta.
+            
+            Ejemplos de mapeo implícito/explícito:
+            - PDF -> ["pdf"]
+            - Word -> ["doc", "docx"]
+            - Excel -> ["xls", "xlsx"]
+            - Foto/Imagen -> ["jpg", "jpeg", "png", "webp", "gif"]
+            - Video -> ["mp4", "mkv", "avi", "mov", "webm"]
+            - Audio/Nota de voz -> ["mp3", "ogg", "wav", "m4a", "opus"]
+            
+            Ejemplo 1:
+            Usuario: "documentos en PDF sobre gatos"
+            salida JSON: {"semantic_query": "sobre gatos", "file_types": ["pdf"]}
+            
+            Ejemplo 2:
+            Usuario: "videos de cumpleaños"
+            salida JSON: {"semantic_query": "de cumpleaños", "file_types": ["mp4", "mkv", "avi", "mov", "webm"]}
+            
+            Ejemplo 3:
+            Usuario: "contrato de alquiler"
+            salida JSON: {"semantic_query": "contrato de alquiler", "file_types": []}
+            
+            Devuelve ÚNICAMENTE el JSON.
+            """
+            
+            for model in AIHandler.CHAT_MODELS:
+                try:
+                    response = await client.chat.completions.create(
+                        model=model,
+                        response_format={ "type": "json_object" },
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": query_text}
+                        ],
+                        max_tokens=150
+                    )
+                    
+                    result_text = response.choices[0].message.content.strip()
+                    logger.info(f"✅ Intención extraída con LLM: {result_text}")
+                    return json.loads(result_text)
+                except Exception as model_error:
+                    logger.warning(f"⚠️ Modelo {model} falló al extraer intención: {model_error}")
+                    continue
+                    
+            return {"semantic_query": query_text, "file_types": []}
+            
+        except Exception as e:
+            logger.error(f"❌ Error al analizar intención: {e}")
+            return {"semantic_query": query_text, "file_types": []}

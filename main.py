@@ -4,6 +4,7 @@ import json
 import warnings
 import platform
 import sys
+import shutil  # NUEVO: Para detectar ancho de pantalla
 import numpy as np
 from datetime import datetime
 from dotenv import load_dotenv
@@ -27,28 +28,24 @@ from telegram.constants import ParseMode
 from telegram.error import NetworkError
 
 # 2. IMPORTACIÓN DE SERVICIOS INICIALIZADOS
-# Asegúrate de que este archivo exista en src/init_services.py
 from src.init_services import db, dropbox_svc, drive_svc, openai_client 
 
 # 3. IMPORTACIÓN DE HANDLERS
-from src.handlers.message_handlers import start, handle_any_file, show_cloud_menu, explorar, get_file_category, FILE_CATEGORIES
+from src.handlers.message_handlers import start, handle_any_file, show_cloud_menu, get_file_category, FILE_CATEGORIES
 from src.handlers.auth_handler import auth_middleware
 from src.utils.ai_handler import AIHandler
 
-# ============================================================================
+# ================================================================================================
 # CACHE GLOBAL DE CARPETAS
-# ============================================================================
-# guardaremos los ids/paths devueltos por los servicios para no volver a crear
-# una carpeta cada vez que subamos un archivo de la misma categoría.
-# Se carga de la BD y se sincroniza automáticamente.
+# ================================================================================================
 CATEGORY_FOLDER_CACHE = {
     'dropbox': {},   # category_name -> path (ej. '/Documentos')
     'drive': {}      # category_name -> folder_id
 }
 
-# ============================================================================
+# ================================================================================================
 # INICIALIZACIÓN DE CARPETAS POR CATEGORÍA
-# ============================================================================
+# ================================================================================================
 async def ensure_category_folders():
     """
     Crea automáticamente las carpetas de categoría en Dropbox y Google Drive
@@ -67,7 +64,6 @@ async def ensure_category_folders():
     # ========== DROPBOX ==========
     if dropbox_svc.dbx:
         try:
-            # Listar carpetas existentes en raíz
             result = dropbox_svc.dbx.files_list_folder("", recursive=False)
             existing_folders = {entry.name for entry in result.entries if hasattr(entry, 'name')}
             print(f"   [DROPBOX] Carpetas existentes: {existing_folders}")
@@ -76,7 +72,6 @@ async def ensure_category_folders():
             existing_folders = set()
         
         for category_name in categories:
-            # Solo crear si no existe
             if category_name not in existing_folders:
                 try:
                     result = await dropbox_svc.create_folder(category_name, parent_path="")
@@ -84,18 +79,15 @@ async def ensure_category_folders():
                         CATEGORY_FOLDER_CACHE['dropbox'][category_name] = result
                         db.save_category_folder(category_name, 'dropbox', result)
                         print(f"   [✅ DROPBOX] {category_name} -> {result} (CREADA)")
-
                 except Exception as e:
                     print(f"   [⚠️  DROPBOX] {category_name}: {e}")
             else:
-                # Ya existe, guardar en cache
                 CATEGORY_FOLDER_CACHE['dropbox'][category_name] = f"/{category_name}"
                 print(f"   [✅ DROPBOX] {category_name} -> /{category_name} (EXISTENTE)")
         
     # ========== GOOGLE DRIVE ==========
     if drive_svc and drive_svc.service:
         try:
-            # Listar carpetas en raíz (parent es root)
             query = "mimeType='application/vnd.google-apps.folder' and trashed=false and 'root' in parents"
             results = drive_svc.service.files().list(
                 q=query, spaces='drive', fields='files(id, name)', pageSize=100
@@ -108,12 +100,10 @@ async def ensure_category_folders():
         
         for category_name in categories:
             if category_name in existing_drives:
-                # Ya existe, guardar en cache y BD
                 CATEGORY_FOLDER_CACHE['drive'][category_name] = existing_drives[category_name]
                 db.save_category_folder(category_name, 'drive', existing_drives[category_name])
                 print(f"   [✅ GOOGLE DRIVE] {category_name} -> {existing_drives[category_name]} (EXISTENTE)")
             else:
-                # Crear
                 try:
                     result = await drive_svc.create_folder(category_name, parent_id=None)
                     if result:
@@ -128,23 +118,42 @@ def print_server_welcome():
     """
     Realiza un chequeo exhaustivo del entorno y muestra un reporte 
     de bienvenida en la consola al iniciar el servidor.
+    ANCHO DINÁMICO: Se adapta al tamaño de la ventana de la terminal.
     """
-    # Cargamos variables de entorno
     load_dotenv()
     
-    # Diseño visual en consola
-    print("\n" + "╔" + "═"*58 + "╗")
-    print("║" + " "*21 + "☁️  CLOUDGRAM PRO v1.0" + " "*21 + "║")
-    print("║" + " "*18 + "SISTEMA DE GESTIÓN CLOUD" + " "*16 + "║")
-    print("╚" + "═"*58 + "╝")
+    # 1. Obtener ancho de la terminal (default 80 si no se detecta)
+    try:
+        cols = shutil.get_terminal_size((80, 20)).columns
+    except:
+        cols = 80
+    
+    # Mínimo de seguridad para que no se rompa el diseño
+    if cols < 40: cols = 40
+    inner_width = cols - 2
 
-    # 1. Información del Sistema
+    # 2. Cabecera Dinámica
+    print("\n╔" + "═" * inner_width + "╗")
+    
+    title1 = "☁️  CLOUDGRAM PRO v1.0"
+    title2 = "SISTEMA DE GESTIÓN CLOUD"
+    
+    # Centrar texto
+    pad1 = (inner_width - len(title1)) // 2
+    print("║" + " " * pad1 + title1 + " " * (inner_width - len(title1) - pad1) + "║")
+    
+    pad2 = (inner_width - len(title2)) // 2
+    print("║" + " " * pad2 + title2 + " " * (inner_width - len(title2) - pad2) + "║")
+    
+    print("╚" + "═" * inner_width + "╝")
+
+    # 3. Información del Sistema
     print(f"📅 Fecha de arranque: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
     print(f"💻 Sistema Operativo: {platform.system()} {platform.release()}")
     print(f"🐍 Python Versión:  {sys.version.split()[0]}")
-    print("-" * 60)
+    print("-" * cols)
 
-    # 2. Verificación de Carpetas (Auto-creación)
+    # 4. Directorios
     print("📁 VERIFICACIÓN DE DIRECTORIOS:")
     required_dirs = ['descargas', 'data']
     for folder in required_dirs:
@@ -160,8 +169,8 @@ def print_server_welcome():
     else:
         print(f"🗄️  Base de Datos:  LOCAL (SQLite)")
 
-    # 4. Verificación de Variables Críticas (.env)
-    print("-" * 60)
+    # 5. Credenciales
+    print("-" * cols)
     print("🔑 CHEQUEO DE CREDENCIALES (.env):")
     critical_keys = [
         'TELEGRAM_BOT_TOKEN', 
@@ -177,15 +186,15 @@ def print_server_welcome():
             print(f"   [❌] Faltante: {key}")
             all_ok = False
         else:
-            # Mostramos solo los primeros 4 caracteres por seguridad
             print(f"   [✅] Configurada: {key} ({val[:4]}***)")
 
-    print("-" * 60)
+    print("-" * cols)
     if all_ok:
         print("🚀 ¡SERVIDOR LISTO! Conectando con la API de Telegram...")
     else:
         print("⚠️  ADVERTENCIA: Faltan llaves. El bot podría no funcionar.")
-    print("═" * 60 + "\n")
+    print("═" * cols + "\n")
+
 # 3. FUNCIONES DE COMANDO
 async def list_files_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     files = db.get_last_files(20)
@@ -194,7 +203,6 @@ async def list_files_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     text = "📋 *Últimos 20 archivos:*\n\n"
     for i, f in enumerate(files, 1): # El '1' inicia el conteo en 1
-        # f[1] es el nombre, f[2] es la url
         text += f"{i}. [{f[1]}]({f[2]}) ({f[3].upper()})\n"
     
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
@@ -204,10 +212,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 *Ayuda de CloudGram Pro*\n\n"
         "Comandos principales:\n"
         "• /start - Menú principal\n"
+        "• /stats - Ver estadísticas en tiempo real\n"
         "• /listar - Mostrar archivos recientes\n"
         "• /buscar <texto> - Buscar por nombre\n"
         "• /buscar_ia <consulta> - Búsqueda semántica (IA)\n"
-        "• /explorar - Explorar carpetas\n"
         "• /eliminar <texto> - Eliminar archivos por nombre\n"
         "• /cancelar - Cancelar acciones en curso\n\n"
         "También puedes enviar archivos (documentos, fotos, audio, voz).\n"
@@ -215,6 +223,37 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(help_text)
 
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Maneja el comando /stats para mostrar métricas directamente en Telegram."""
+    try:
+        with db._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM files")
+                total_db = cur.fetchone()[0]
+
+                cur.execute("SELECT COUNT(*) FROM files WHERE embedding IS NOT NULL AND embedding NOT IN ('', '[]', 'error_limit')")
+                count_ia = cur.fetchone()[0]
+
+                cur.execute("SELECT COUNT(*) FROM files WHERE type IN ('🖼️ Foto', '🎥 Video', 'jpg', 'png', 'jpeg') OR name ILIKE '%.jpg' OR name ILIKE '%.png' OR name ILIKE '%.jpeg'")
+                count_fotos = cur.fetchone()[0]
+
+                cur.execute("SELECT COUNT(*) FROM files WHERE embedding IS NULL OR embedding IN ('', '[]', 'error_limit')")
+                count_pending = cur.fetchone()[0]
+                
+        db_status = db.check_connection()
+        
+        texto = f"📊 *Estadísticas de CloudGram*\n\n"
+        texto += f"📁 *Archivos Totales:* {total_db}\n"
+        texto += f"🧠 *Indexados IA:* {count_ia}\n"
+        texto += f"📸 *Multimedia:* {count_fotos}\n"
+        texto += f"⚠️ *Pendientes/Errores:* {count_pending}\n\n"
+        texto += f"🔌 *Base de datos:* {'ONLINE ✅' if db_status else 'OFFLINE ❌'}\n"
+        
+        db.log_event("INFO", "BOT", "Comando /stats consultado desde Telegram.")
+        await update.message.reply_text(texto, parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+         db.log_event("ERROR", "BOT", f"Error en /stats: {e}")
+         await update.message.reply_text(f"❌ Error al consultar estadísticas: {e}")
 
 async def unknown_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Maneja comandos no reconocidos y muestra la ayuda al usuario."""
@@ -227,7 +266,6 @@ async def unknown_command_handler(update: Update, context: ContextTypes.DEFAULT_
     await help_command(update, context)
     
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Búsqueda simple por nombre con paginación
     user_data = context.user_data
     query = " ".join(context.args)
     if not query:
@@ -237,7 +275,6 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not raw:
         return await update.message.reply_text("❌ No encontré archivos con ese nombre.")
 
-    # Normalizar y deduplicar
     normalized = []
     seen = set()
     for fid, name, url, service, summary, tech in raw:
@@ -263,7 +300,6 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     state = user_data.get('state')
 
-    # --- LÓGICA 1: ELIMINACIÓN POR ÍNDICE (PERSISTENTE) ---
     if state == 'waiting_delete_selection':
         if text.lower() in ['cancelar', 'terminar', 'salir']:
             user_data['state'] = None
@@ -275,8 +311,6 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             results = user_data.get('search_results', [])
             
             if 0 <= idx < len(results):
-                # Extraemos datos del archivo seleccionado
-                # results[idx] es: (id, name, url, service, summary, tech_desc)
                 selected = results[idx]
                 fid = selected[0]
                 name = selected[1]
@@ -284,39 +318,31 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 msg = await update.message.reply_text(f"⏳ Eliminando `{name}` de {service.upper()}...")
                 
-                # 1. Borrado en la Nube
                 cloud_deleted = False
                 try:
                     if service == 'dropbox':
-                        # Dropbox usa el path con /
                         cloud_deleted = await dropbox_svc.delete_file(f"/{name}")
                     elif service == 'drive':
-                        # Drive usa el nombre para buscar el ID internamente
                         cloud_deleted = await drive_svc.delete_file(name)
                 except Exception as e:
                     print(f"Error borrado cloud: {e}")
 
-                # 2. Borrado en DB
                 db.delete_file_by_id(fid)
                 
-                # 3. Remover de la lista local para actualizar la vista inmediatamente
                 results.pop(idx)
                 user_data['search_results'] = results
 
                 status = "✅ Eliminado por completo." if cloud_deleted else "⚠️ Eliminado de la DB (No se pudo borrar de la nube)."
                 await msg.edit_text(f"{status}\nArchivo: `{name}`")
 
-                # 4. Verificar si quedan archivos
                 if not results:
                     user_data['state'] = None
                     return await update.message.reply_text("📭 Ya no quedan archivos en esta búsqueda.")
                 
-                # Ajustar página si es necesario
                 items_per_page = 10
                 if user_data.get('current_page', 0) * items_per_page >= len(results):
                     user_data['current_page'] = max(0, user_data.get('current_page', 0) - 1)
 
-                # Mostrar la lista actualizada automáticamente
                 await update.message.reply_text("🔄 Actualizando lista...")
                 return await send_delete_page(update, context, edit=False)
             else:
@@ -336,29 +362,23 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ Renombrado a: `{new_name}`")
         return await show_cloud_menu(update, context, edit=False)
 
-    # --- LÓGICA 3: CREACIÓN DE CARPETAS (NUEVA) ---
     if state == 'waiting_folder_name':
         folder_name = text
-        parent_id = user_data.get('parent_folder_id') # Viene del callback mkdir_
+        parent_id = user_data.get('parent_folder_id')
         
-        # Validación básica de nombre
         if any(c in folder_name for c in ['/', '\\', ':', '*', '?', '"', '<', '>', '|']):
             return await update.message.reply_text("❌ El nombre contiene caracteres no permitidos.")
 
         status_msg = await update.message.reply_text(f"🛠️ Creando carpeta `{folder_name}` en la nube...")
         
         try:
-            # 1. Determinar el path del padre si existe (para Dropbox)
             parent_path = ""
             if parent_id:
                 p_folder = db.get_folder_by_id(parent_id)
                 parent_path = p_folder['cloud_folder_id'] if p_folder else ""
 
-            # 2. Crear en la Nube (Dropbox por defecto o según servicio activo)
-            # Asegúrate que dropbox_svc.create_folder devuelva el path/id creado
             cloud_id = await dropbox_svc.create_folder(folder_name, parent_path)
             
-            # 3. Registrar en la Base de Datos
             db.create_folder(
                 name=folder_name, 
                 service='dropbox', 
@@ -366,7 +386,6 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parent_id=parent_id
             )
             
-            # Limpiar estado
             user_data['state'] = None
             user_data.pop('parent_folder_id', None)
             
@@ -378,14 +397,12 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await status_msg.edit_text(f"❌ Error al crear la carpeta: {str(e)}")
             return
 
-    # Si ninguna de las ramas anteriores coincidió, respondemos con ayuda
     await update.message.reply_text("❌ No reconozco esa entrada. Aquí tienes la ayuda:")
     await help_command(update, context)
     return
 
 # 4. PROCESO DE SUBIDA Y CALLBACKS
 async def upload_process(update, context, target_files_info: list, predefined_embedding=None):
-    """Procesa archivos, genera resúmenes IA y registra en DB"""
     user_data = context.user_data
     selected_clouds = user_data.get('selected_clouds', set())
     if not selected_clouds:
@@ -400,31 +417,31 @@ async def upload_process(update, context, target_files_info: list, predefined_em
                 await tg_f.download_to_drive(local_path)
             except: continue
 
-        # IA: Texto, Resumen y Embedding
         texto = await AIHandler.extract_text(local_path)
         vector = predefined_embedding
         resumen = None
         ext = file_name.split('.')[-1].lower()
         desc_tec = f"Archivo {ext.upper()}"
 
-        if texto:
-            if not vector: vector = await AIHandler.get_embedding(texto)
+        if texto and texto.strip():
+            print(f"🧠 IA: Texto extraído de '{file_name}' ({len(texto)} chars). Generando embedding...")
+            if not vector:
+                vector = await AIHandler.get_embedding(texto)
+                print(f"🔢 Embedding: {'✅ OK (' + str(len(vector)) + ' dims)' if vector else '❌ FALLÓ (None)'}")
             resumen = await AIHandler.generate_summary(texto)
         else:
+            print(f"⚠️ IA: No se extrajo texto de '{file_name}' (ext={ext}). Sin embedding.")
             resumen = f"Documento binario/comprimido ({ext}). No se extrajo texto."
 
-        # NUEVO: Obtener categoría automáticamente
         category = get_file_category(file_name) or "Otros"
         
         cloud_links = []
         for cloud in selected_clouds:
             try:
                 if cloud == 'dropbox':
-                    # usar cache para la ruta
                     folder_arg = CATEGORY_FOLDER_CACHE['dropbox'].get(category, category)
                     url = await dropbox_svc.upload(local_path, file_name, folder=folder_arg)
                 else:  # drive
-                    # obtener folder_id del cache, si no existe crear y cachear
                     folder_id = CATEGORY_FOLDER_CACHE['drive'].get(category)
                     if not folder_id:
                         folder_id = await drive_svc.create_folder(category, parent_id=None)
@@ -433,13 +450,18 @@ async def upload_process(update, context, target_files_info: list, predefined_em
                     url = await drive_svc.upload(local_path, file_name, folder_id=folder_id) if folder_id else None
                 
                 if url:
-                    # AQUÍ ESTÁ EL CAMBIO: Creamos un link Markdown
                     cloud_links.append(f"[✅ {cloud.capitalize()}]({url})")
                     
                     db.register_file(
-                        telegram_id=original_info['id'], name=file_name, f_type=ext,
-                        cloud_url=url, service=cloud, content_text=texto,
-                        embedding=vector, summary=resumen, technical_description=desc_tec,
+                        telegram_id=update.effective_user.id,  # ID real del usuario
+                        name=file_name,
+                        f_type=ext,
+                        cloud_url=url,
+                        service=cloud,
+                        content_text=texto,
+                        embedding=vector,
+                        summary=resumen,
+                        technical_description=desc_tec,
                         folder_id=original_info.get('folder_id', user_data.get('current_folder_id'))
                     )
             except Exception as e:
@@ -448,8 +470,28 @@ async def upload_process(update, context, target_files_info: list, predefined_em
 
         final_report.append(f"📄 `{file_name}`\n" + " | ".join(cloud_links))
         if os.path.exists(local_path): os.remove(local_path)
+        db.log_event("SUCCESS", "BOT", f"Archivo subido y registrado: {file_name}", {"clouds": list(selected_clouds), "links": len(cloud_links)})
 
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="🚀 *Subida finalizada:*\n\n" + "\n".join(final_report), parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+    # Enviar reporte final con reintentos ante posibles timeouts de red
+    import asyncio as _asyncio
+    from telegram.error import TimedOut as _TimedOut, NetworkError as _NetErr
+    for attempt in range(3):
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="🚀 *Subida finalizada:*\n\n" + "\n".join(final_report),
+                parse_mode=ParseMode.MARKDOWN,
+                disable_web_page_preview=True
+            )
+            break
+        except (_TimedOut, _NetErr) as net_err:
+            if attempt < 2:
+                await _asyncio.sleep(3 * (attempt + 1))
+            else:
+                print(f"⚠️ No se pudo enviar el reporte final tras 3 intentos: {net_err}")
+        except Exception as e:
+            print(f"❌ Error inesperado enviando reporte: {e}")
+            break
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -457,10 +499,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_data = context.user_data
     
-    # 1. Responder siempre para quitar el estado de "cargando" en Telegram
     await query.answer()
 
-    # 2. Lógica para seleccionar/deseleccionar nubes
     if data.startswith('toggle_'):
         cloud = data.replace('toggle_', '')
         if 'selected_clouds' not in user_data:
@@ -471,18 +511,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             user_data['selected_clouds'].add(cloud)
         
-        # Refrescar el menú para mostrar los nuevos checks (✅)
-        # El try/except evita que el bot se detenga si Telegram dice "Message not modified"
         try:
             await show_cloud_menu(update, context, edit=True)
         except Exception as e:
             if "Message is not modified" not in str(e):
                 print(f"Error al refrescar menú: {e}")
 
-    # Los callbacks de voz se manejan ahora en src/handlers/message_handlers.py 
-    # mediante voice_options_callback (registrado con el patrón ^voice_)
-
-    # 4. Lógica de confirmación de subida estándar
     elif data == 'confirm_upload':
         queue = user_data.get('file_queue', [])
         selected_clouds = user_data.get('selected_clouds', set())
@@ -523,14 +557,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data == 'del_page_next':
         user_data['current_page'] += 1
-        # Llamamos a la función para refrescar el mensaje sin borrar
         return await send_delete_page(update, context, edit=True)
         
     elif data == 'del_page_prev':
         user_data['current_page'] -= 1
         return await send_delete_page(update, context, edit=True)
 
-    # navegación en resultados IA
     elif data == 'search_page_next':
         user_data['ia_current_page'] = user_data.get('ia_current_page', 0) + 1
         return await send_search_page(update, context, edit=True)
@@ -543,7 +575,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data.pop('ia_items_per_page', None)
         return await query.edit_message_text("🚫 Búsqueda cancelada.")
 
-    # navegación en resultados por nombre (/buscar)
     elif data == 'name_search_next':
         user_data['name_search_page'] = user_data.get('name_search_page', 0) + 1
         return await send_name_search_page(update, context, edit=True)
@@ -556,7 +587,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data.pop('name_items_per_page', None)
         return await query.edit_message_text("🚫 Búsqueda cancelada.")
 
-    # --- LÓGICA DE CANCELACIÓN ---
     elif data == 'cancel_deletion':
         user_data['state'] = None
         user_data.pop('search_results', None)
@@ -571,38 +601,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📁 *Nueva Carpeta*\nEscribe el nombre que deseas ponerle:",
             parse_mode=ParseMode.MARKDOWN
         )
-        
-    # --- LÓGICA DE EXPLORADOR ---
-    elif data.startswith('exp_page_'):
-        # Format: exp_page_{folder_id}_{page}
-        parts = data.split('_')
-        page = int(parts[-1])
-        folder_id = '_'.join(parts[2:-1])
-        if folder_id == 'root':
-            folder_id = None
-            
-        from src.handlers.message_handlers import send_explorer
-        await send_explorer(update, context, folder_id=folder_id, page=page)
-        
-    elif data.startswith('exp_svc_'):
-        if data == 'exp_svc_menu':
-            # Volver a selección de nube
-            from src.handlers.message_handlers import explorar
-            context.user_data.pop('explore_service', None)
-            await explorar(update, context)
-        else:
-            # Seleccionó una nube en específico (exp_svc_dropbox o exp_svc_drive)
-            service = data.replace('exp_svc_', '')
-            context.user_data['explore_service'] = service
-            from src.handlers.message_handlers import send_explorer
-            await send_explorer(update, context, folder_id=None)
+    
 # 5. BÚSQUEDA IA Y ELIMINAR
 
 async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Búsqueda Semántica Avanzada usando Gemini Embeddings.
-    CORREGIDO: Usa AIHandler.get_embedding() en lugar de openai_client
-    """
     user_data = context.user_data
     if not context.args:
         return await update.message.reply_text("🔎 *Uso:* `/buscar_ia concepto`", parse_mode=ParseMode.MARKDOWN)
@@ -611,26 +613,33 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("🤖 Consultando mi base neuronal con Gemini...")
     
     try:
-        query_vector = await AIHandler.get_embedding(query_text)
+        # 1. Extraer intención de búsqueda (Texto semántico vs Tipo de archivo)
+        intent = await AIHandler.analyze_search_intent(query_text)
+        semantic_query = intent.get("semantic_query", query_text)
+        file_types = intent.get("file_types", [])
+        
+        # Si el LLM extrajo tipos, se lo decimos al usuario para darle feedback
+        if file_types:
+            await msg.edit_text(f"🤖 Entendido. Buscando `{semantic_query}` en archivos tipo: {', '.join(file_types).upper()}...")
+
+        query_vector = await AIHandler.get_embedding(semantic_query)
         
         if not query_vector:
             return await msg.edit_text("❌ Error generando embedding. Verifica tu API key de Gemini.")
 
-        # 2. Llamar a la función de búsqueda semántica de la DB
-        raw_results = db.search_semantic(query_vector, limit=20)
+        raw_results = db.search_semantic(query_vector, limit=20, file_types=file_types)
 
         normalized = []
         seen_names = set()
         
-        # Aplicar umbral para similitud y eliminar duplicados
-        # NOTA: El umbral puede necesitar ajuste debido al cambio de dimensiones
-        semantic = [r for r in raw_results if r.get('similarity', 0) >= 0.2]
+        # Umbral MUCHO MÁS ESTRICTO (0.60) para evitar basura en los resultados.
+        semantic = [r for r in raw_results if r.get('similarity', 0) >= 0.60]
         
         if not semantic:
-            await msg.edit_text("🔄 No hay coincidencias relevantes por concepto. Buscando por nombre...")
+            await msg.edit_text("🔄 No hay coincidencias perfectas por concepto. Buscando por nombre de forma tradicional...")
             tradicional = db.search_by_name(query_text)
             if not tradicional:
-                return await msg.edit_text("😔 No encontré nada, ni siquiera por nombre.")
+                return await msg.edit_text(f"😔 No encontré archivos relevantes para: `{query_text}`.")
 
             for fid, name, url, service, summary, tech in tradicional[:20]:
                 if name in seen_names:
@@ -659,11 +668,9 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     'score': res.get('similarity', None)
                 })
 
-        # Guardamos resultados en user_data para paginar
         user_data['search_results_ia'] = normalized
         user_data['ia_current_page'] = 0
         
-        # Ajuste dinámico de items por página
         n = len(normalized)
         if n <= 5:
             user_data['ia_items_per_page'] = 1
@@ -681,7 +688,6 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text(f"⚠️ Hubo un error procesando la búsqueda: {str(e)}")
 
 async def cancelar_handler(update, context):
-    """Limpia cualquier estado y responde con éxito"""
     user_name = update.effective_user.first_name
     await update.message.reply_text(
         f"👋 ¡Entendido, {user_name}! He detenido cualquier proceso activo.\n"
@@ -721,11 +727,8 @@ async def send_delete_page(update, context, edit=False):
     text += "Escribe el **número** para borrar permanentemente:\n\n"
     
     for i, item in enumerate(current_items, start_idx + 1):
-        # item[1] es name, item[2] es cloud_url, item[3] es service
-        # Creamos un hipervínculo en el nombre del archivo
         text += f"{i}. [{item[1]}]({item[2]}) | _{item[3].capitalize()}_\n"
     
-    # Construcción de botones de navegación
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton("⬅️ Anterior", callback_data="del_page_prev"))
@@ -737,7 +740,6 @@ async def send_delete_page(update, context, edit=False):
     
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Importante: disable_web_page_preview=True para que no se llene el chat de cuadros de previsualización
     if edit and update.callback_query:
         await update.callback_query.edit_message_text(
             text, 
@@ -754,7 +756,7 @@ async def send_delete_page(update, context, edit=False):
         )
         
 async def send_search_page(update, context, edit=False):
-    """Muestra una página de resultados de `/buscar_ia` almacenados."""
+    """Muestra resultados paginados con línea dinámica adaptable."""
     user_data = context.user_data
     results = user_data.get('search_results_ia', [])
     page = user_data.get('ia_current_page', 0)
@@ -769,18 +771,30 @@ async def send_search_page(update, context, edit=False):
     total_pages = (len(results) + items_per_page - 1) // items_per_page
 
     text = f"🎯 *Resultados de búsqueda* (Página {page+1}/{total_pages})\n\n"
+    
+    # ANCHO DE LÍNEA DINÁMICO PARA TELEGRAM
+    # Telegram no notifica el ancho, usamos un estándar estético (ej. 30 caracteres).
+    # Se ajustará según el largo del emoji numérico.
+    BASE_WIDTH = 30 
+    
     for idx, item in enumerate(current_items, start_idx + 1):
         score = f" ({int(item['score']*100)}%)" if item.get('score') else ""
-        # convertir número a emoji (1 -> 1️⃣, 2 -> 2️⃣, ...)
+        
+        # Lógica para convertir número a emoji y calcular ancho de línea
         num_emoji = f"{idx}️⃣"
-        text += f"{num_emoji} "
-        text += "•—————————————————————\n"
+        
+        # Calcular cuántos '=' necesitamos para llenar la línea
+        # len(num_emoji) suele ser 3 para <10 (ej 1️⃣) y 4 para >=10 (ej 10️⃣)
+        # Restamos también el espacio después del emoji (+1)
+        line_fill_len = BASE_WIDTH - len(num_emoji) - 1
+        separator = "=" * line_fill_len
+        
+        text += f"{num_emoji} {separator}\n"
         text += f"📄 *{item['name']}*{score}\n"
         text += f"📝 _{item.get('summary','')}_\n"
         if item.get('url'):
             text += f"🔗 *Enlace:* [Ver en la nube]({item['url']})\n"
         text += "\n"
-    text += "•—————————————————————\n"
 
     nav_buttons = []
     if page > 0:
@@ -840,16 +854,12 @@ async def send_name_search_page(update, context, edit=False):
 
 async def execute_full_deletion(fid, name, service, update):
     try:
-        # 1. Intentar borrar de la Nube
         success = False
         if service == 'dropbox':
-            # Dropbox requiere el path completo (ej: /foto.jpg)
             success = await dropbox_svc.delete_file(f"/{name}") 
         elif service == 'drive':
-            # Drive suele requerir el ID del archivo, si lo guardaste en DB úsalo
             success = await drive_svc.delete_file(name) 
 
-        # 2. Borrar de la Base de Datos
         db.delete_file_by_id(fid)
         
         status = "y de la nube ✅" if success else "(solo de la DB ⚠️)"
@@ -862,32 +872,19 @@ async def execute_full_deletion(fid, name, service, update):
 async def post_init(application):
     await application.bot.set_my_commands([
         BotCommand("start", "🏠 Menú Principal"),
+        BotCommand("stats", "📊 Estadísticas"),
         BotCommand("buscar_ia", "🤖 Búsqueda Inteligente"),
-        BotCommand("explorar", "📂 Mis Carpetas"),
         BotCommand("listar", "📋 Recientes"),
         BotCommand("buscar", "🔎 Buscar por nombre"),
         BotCommand("eliminar", "🗑️ Borrar archivos"),
         BotCommand("ayuda", "🆘 Ayuda"),
         BotCommand("help", "🆘 Help")
     ])
-    # Inicializar carpetas de categoría en los servicios cloud
     await ensure_category_folders()
-# 7. CARPETAS Y ARCHIVOS (EXPLORADOR)
-
-async def cambiar_directorio(update, context):
-    query = update.callback_query
-    await query.answer()
-    
-    # Supongamos que el callback_data es "cd_123" o "cd_root"
-    folder_id = query.data.split('_')[1]
-    
-    from src.handlers.message_handlers import send_explorer
-    await send_explorer(update, context, folder_id=None if folder_id == "root" else folder_id)
+    db.log_event("INFO", "SISTEMA", "Bot iniciado correctamente y menús registrados.")
 
 async def error_handler(update, context):
-    """Maneja errores de red de forma silenciosa si son temporales."""
     if isinstance(context.error, NetworkError):
-        # Solo logueamos una advertencia corta en lugar de todo el traceback
         print(f"⚠️ Error de red temporal en Telegram: {context.error}")
     else:
         print(f"❌ Error crítico: {context.error}")
@@ -899,34 +896,28 @@ if __name__ == '__main__':
     
     app = ApplicationBuilder().token(os.getenv("TELEGRAM_BOT_TOKEN")).post_init(post_init).build()
     
-    # Middleware de autorización global (se ejecuta antes que cualquier otro handler)
     app.add_handler(TypeHandler(Update, auth_middleware), group=-1)
 
-    # Comandos principales
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("listar", list_files_command))
     app.add_handler(CommandHandler("buscar", search_command))
     app.add_handler(CommandHandler("buscar_ia", search_ia_command))
     app.add_handler(CommandHandler("eliminar", delete_command))
-    app.add_handler(CommandHandler("explorar", explorar))
     app.add_handler(CommandHandler("ayuda", help_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(voice_options_callback, pattern="^voice_"))
     app.add_handler(CommandHandler(["cancelar", "salir", "stop"], cancelar_handler))
-    # Capturar comandos no reconocidos y mostrar ayuda
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command_handler))
         
-    # Manejo de archivos y multimedia
     app.add_handler(MessageHandler(
         (filters.Document.ALL | filters.PHOTO | filters.VIDEO | 
          filters.VIDEO_NOTE | filters.AUDIO | filters.VOICE | filters.LOCATION), 
         handle_any_file
     ))
     
-    # Manejo de texto (para renombrar)
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text_input))
     
-    # Callbacks de botones
     app.add_handler(CallbackQueryHandler(button_callback))
     
     print("🚀 CloudGram PRO v1.0 ONLINE")

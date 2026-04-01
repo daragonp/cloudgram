@@ -1,0 +1,95 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <div>
+        <h2 class="fw-bold mb-1 text-white"><i class="bi bi-terminal me-2 text-cyan"></i> System Logs</h2>
+        <p class="text-muted mb-0">Monitor bot processes, uploads, and AI indexing</p>
+    </div>
+    <form class="d-flex gap-2" method="GET" action="{{ url_for('logs') }}">
+        <select name="level" class="form-select bg-dark text-white border-secondary" style="width: auto;">
+            <option value="ALL" {% if current_level == 'ALL' %}selected{% endif %}>Todos los niveles</option>
+            <option value="INFO" {% if current_level == 'INFO' %}selected{% endif %}>INFO</option>
+            <option value="WARNING" {% if current_level == 'WARNING' %}selected{% endif %}>WARNING</option>
+            <option value="ERROR" {% if current_level == 'ERROR' %}selected{% endif %}>ERROR</option>
+            <option value="SUCCESS" {% if current_level == 'SUCCESS' %}selected{% endif %}>SUCCESS</option>
+        </select>
+
+        <select name="module" class="form-select bg-dark text-white border-secondary" style="width: auto;">
+            <option value="">Cualquier Módulo</option>
+            <option value="BOT" {% if current_module == 'BOT' %}selected{% endif %}>BOT</option>
+            <option value="INDEXER" {% if current_module == 'INDEXER' %}selected{% endif %}>INDEXER</option>
+            <option value="AI" {% if current_module == 'AI' %}selected{% endif %}>AI</option>
+            <option value="DRIVE" {% if current_module == 'DRIVE' %}selected{% endif %}>DRIVE</option>
+        </select>
+        
+        <select name="limit" class="form-select bg-dark text-white border-secondary" style="width: auto;">
+            <option value="50" {% if limit|string == '50' %}selected{% endif %}>Últimos 50</option>
+            <option value="100" {% if limit|string == '100' %}selected{% endif %}>Últimos 100</option>
+            <option value="300" {% if limit|string == '300' %}selected{% endif %}>Últimos 300</option>
+            <option value="1000" {% if limit|string == '1000' %}selected{% endif %}>Últimos 1000</option>
+        </select>
+
+        <button type="submit" class="btn btn-outline-cyan">
+            <i class="bi bi-funnel"></i> Filtrar
+        </button>
+        <a href="{{ url_for('logs') }}" class="btn btn-outline-secondary">Reset</a>
+    </form>
+</div>
+
+<div class="glass-panel p-4 h-100">
+    {% if logs %}
+    <div class="table-responsive">
+        <table class="table table-dark table-hover mb-0" style="background: transparent;">
+            <thead>
+                <tr class="text-muted align-middle" style="font-size: 0.85rem; letter-spacing: 0.5px; border-bottom: 2px solid var(--border-color);">
+                    <th scope="col" width="180">FECHA</th>
+                    <th scope="col" width="100">NIVEL</th>
+                    <th scope="col" width="120">MÓDULO</th>
+                    <th scope="col">MENSAJE</th>
+                </tr>
+            </thead>
+            <tbody style="border-top: none;">
+                {% for log in logs %}
+                <tr class="align-middle" style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                    <td class="font-monospace text-muted" style="font-size: 0.85rem;">
+                        {{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') }}
+                    </td>
+                    <td>
+                        {% autoescape off %}
+                        {% if log.level == 'ERROR' %}
+                            <span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 px-2 py-1"><i class="bi bi-x-circle me-1"></i>ERROR</span>
+                        {% elif log.level == 'WARNING' %}
+                            <span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25 px-2 py-1"><i class="bi bi-exclamation-triangle me-1"></i>WARN</span>
+                        {% elif log.level == 'SUCCESS' %}
+                            <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25 px-2 py-1"><i class="bi bi-check-circle me-1"></i>SUCCESS</span>
+                        {% else %}
+                            <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 px-2 py-1"><i class="bi bi-info-circle me-1"></i>INFO</span>
+                        {% endif %}
+                        {% endautoescape %}
+                    </td>
+                    <td>
+                        <span class="badge rounded-pill bg-secondary bg-opacity-25 text-light fw-normal font-monospace border border-secondary border-opacity-25">
+                            {{ log.module if log.module else 'SISTEMA' }}
+                        </span>
+                    </td>
+                    <td class="text-light" style="font-size: 0.95rem;">
+                        {{ log.message }}
+                        {% if log.metadata %}
+                            <br><small class="text-muted font-monospace" style="font-size: 0.75rem;">{{ log.metadata }}</small>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-5">
+        <i class="bi bi-journal-x display-4 mb-3 d-block text-secondary opacity-50"></i>
+        <h4>No hay logs disponibles</h4>
+        <p>No se han registrado eventos con los filtros actuales.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

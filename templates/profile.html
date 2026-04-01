@@ -1,46 +1,49 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-6">
-        <div class="card border-0 shadow-lg my-5">
-            <div class="card-body p-5">
-                <h4 class="card-title text-center mb-4 fw-normal">Ajustes de Perfil</h4>
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <div>
+        <h2 class="fw-bold mb-1 text-white"><i class="bi bi-person-gear me-2" style="color: var(--accent);"></i> Ajustes de Perfil</h2>
+        <p class="text-muted mb-0">Gestiona tus credenciales de administrador</p>
+    </div>
+</div>
 
-                <form action="{{ url_for('perfil') }}" method="POST">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<div class="row">
+    <div class="col-lg-8 col-xl-6">
+        <div class="glass-panel p-4 p-md-5">
+            <form action="{{ url_for('perfil') }}" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-                    <div class="row mb-3">
-                        <div class="col-md-6">
-                            <label class="form-label text-cyan">Nombre de Administrador</label>
-                            <input type="text" name="nombre" class="form-control" value="{{ user.nombre }}" placeholder="Ej: Admin CloudGram">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label text-muted">Email (No editable)</label>
-                            <input type="email" class="form-control" value="{{ user.email }}" readonly style="opacity: 0.6;">
-                        </div>
+                <div class="row g-4 mb-4">
+                    <div class="col-md-6">
+                        <label class="form-label text-white-50 small fw-bold text-uppercase" style="letter-spacing: 0.5px;">Nombre de Administrador</label>
+                        <input type="text" name="nombre" class="form-control bg-dark border-secondary text-white" value="{{ user.nombre }}" placeholder="Ej: Admin CloudGram">
                     </div>
-
-                    <div class="mb-4">
-                        <label class="form-label text-cyan">Nueva Contraseña</label>
-                        <div class="input-group">
-                            <input id="newPassword" type="password" name="new_password" class="form-control" placeholder="Mínimo 6 caracteres">
-                            <button class="btn btn-outline-secondary" type="button" id="togglePassword">
-                                👁️
-                            </button>
-                        </div>
-                        <div class="form-text text-muted">Deja este campo vacío si no deseas cambiar la contraseña actual.</div>
+                    <div class="col-md-6">
+                        <label class="form-label text-muted small fw-bold text-uppercase" style="letter-spacing: 0.5px;">Email (No editable)</label>
+                        <input type="email" class="form-control bg-dark border-dark text-muted" value="{{ user.email }}" readonly style="cursor: not-allowed;">
                     </div>
+                </div>
 
-                    <button type="submit" class="btn btn-primary w-100 fw-bold">Actualizar Perfil de Administrador</button>
-                </form>
-            </div>
+                <div class="mb-5">
+                    <label class="form-label text-white-50 small fw-bold text-uppercase" style="letter-spacing: 0.5px;">Nueva Contraseña</label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-dark border-secondary text-muted border-end-0"><i class="bi bi-key"></i></span>
+                        <input id="newPassword" type="password" name="new_password" class="form-control bg-dark border-secondary text-white border-end-0 border-start-0 ps-0" placeholder="Mínimo 6 caracteres">
+                        <button class="btn btn-outline-secondary border-start-0 border-secondary bg-dark text-muted" type="button" id="togglePassword">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                    </div>
+                    <div class="form-text mt-2 text-muted" style="font-size: 0.8rem;"><i class="bi bi-info-circle me-1"></i>Deja este campo vacío si no deseas cambiar la contraseña actual.</div>
+                </div>
+
+                <button type="submit" class="btn btn-accent text-dark border-0 px-4 py-3 w-100 fw-bold rounded-3">Guardar Cambios</button>
+            </form>
         </div>
     </div>
 </div>
 
 <script>
-    // toggle visibility of new password field
     document.addEventListener('DOMContentLoaded', function() {
         const toggleBtn = document.getElementById('togglePassword');
         const pwdInput = document.getElementById('newPassword');
@@ -48,8 +51,7 @@
             toggleBtn.addEventListener('click', function() {
                 const type = pwdInput.getAttribute('type') === 'password' ? 'text' : 'password';
                 pwdInput.setAttribute('type', type);
-                // optionally change icon text
-                toggleBtn.textContent = type === 'password' ? '👁️' : '🙈';
+                toggleBtn.innerHTML = type === 'password' ? '<i class="bi bi-eye"></i>' : '<i class="bi bi-eye-slash"></i>';
             });
         }
     });

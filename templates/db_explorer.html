@@ -1,0 +1,140 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<!-- DataTables CSS -->
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap5.min.css">
+<style>
+    .table-list-item {
+        transition: 0.3s;
+        border-left: 4px solid transparent;
+    }
+    .table-list-item:hover {
+        background: rgba(0, 229, 255, 0.05) !important;
+        border-left-color: var(--accent);
+        transform: translateX(5px);
+    }
+    .dataTables_wrapper .dataTables_filter input {
+        background-color: rgba(255,255,255,0.05);
+        border: 1px solid var(--border-color);
+        color: #fff;
+        border-radius: 8px;
+        padding: 6px 12px;
+    }
+    .dataTables_wrapper .dataTables_length select {
+        background-color: rgba(255,255,255,0.05);
+        border: 1px solid var(--border-color);
+        color: #fff;
+        border-radius: 6px;
+    }
+    .table-explorer td {
+        max-width: 300px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 0.85rem;
+    }
+    .db-header {
+        background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, transparent 100%);
+        border-radius: 12px;
+        padding: 1.5rem;
+        border-left: 4px solid var(--accent);
+    }
+</style>
+
+<div class="mb-4">
+    {% if not table_name %}
+    <div class="db-header mb-4">
+        <h2 class="fw-bold mb-1 text-white"><i class="bi bi-database-fill-gear me-2 text-cyan"></i> Database Explorer</h2>
+        <p class="text-muted mb-0">Selecciona una tabla para explorar sus registros en tiempo real.</p>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-md-4">
+            <div class="glass-panel p-0 overflow-hidden">
+                <div class="p-3 border-bottom" style="border-color: var(--border-color) !important;">
+                    <h6 class="mb-0 fw-bold text-uppercase small text-muted" style="letter-spacing: 1px;">Esquema Público</h6>
+                </div>
+                <div class="list-group list-group-flush">
+                    {% for table in tables %}
+                    <a href="{{ url_for('db_explorer_table', table_name=table) }}" class="list-group-item list-group-item-action bg-transparent text-white py-3 table-list-item d-flex align-items-center justify-content-between border-bottom" style="border-color: var(--border-color) !important;">
+                        <span><i class="bi bi-table me-2 text-cyan"></i> {{ table }}</span>
+                        <i class="bi bi-chevron-right small opacity-50"></i>
+                    </a>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        <div class="col-md-8">
+            <div class="glass-panel p-5 text-center d-flex flex-column align-items-center justify-content-center" style="min-height: 300px;">
+                <i class="bi bi-cursor-fill display-1 text-muted opacity-25 mb-4"></i>
+                <h4 class="text-muted">Selección Pendiente</h4>
+                <p class="text-muted small">Haz clic en una tabla del menú lateral para visualizar sus datos.</p>
+            </div>
+        </div>
+    </div>
+
+    {% else %}
+    <!-- VIEW TABLE CONTENT -->
+    <div class="db-header mb-4 d-flex justify-content-between align-items-center">
+        <div>
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb mb-1">
+                    <li class="breadcrumb-item"><a href="{{ url_for('db_explorer_list') }}" class="text-cyan text-decoration-none">Explorer</a></li>
+                    <li class="breadcrumb-item active text-white" aria-current="page">{{ table_name }}</li>
+                </ol>
+            </nav>
+            <h2 class="fw-bold mb-0 text-white"><i class="bi bi-table me-2 text-cyan"></i> Contenido: {{ table_name }}</h2>
+        </div>
+        <span class="badge bg-cyan bg-opacity-10 text-cyan border border-info border-opacity-25 px-3 py-2">
+            {{ total_rows }} registros mostrados
+        </span>
+    </div>
+
+    <div class="glass-panel p-4">
+        <div class="table-responsive">
+            <table id="dbTable" class="table table-dark table-hover mb-0 align-middle table-explorer">
+                <thead>
+                    <tr class="text-muted" style="font-size: 0.8rem; text-transform: uppercase;">
+                        {% for col in columns %}
+                        <th>{{ col }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in data %}
+                    <tr>
+                        {% for col in columns %}
+                        <td title="{{ row[col] if row[col] is not none else 'NULL' }}">
+                            {% if row[col] is none %}
+                                <span class="text-muted opacity-50">NULL</span>
+                            {% elif col == 'embedding' and row[col]|length > 50 %}
+                                <span class="text-cyan small font-monospace">[VectorData]</span>
+                            {% else %}
+                                {{ row[col]|string }}
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.7/js/dataTables.bootstrap5.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            $('#dbTable').DataTable({
+                "language": {
+                    "url": "//cdn.datatables.net/plug-ins/1.13.7/i18n/es-ES.json"
+                },
+                "pageLength": 25,
+                "deferRender": true
+            });
+        });
+    </script>
+    {% endif %}
+</div>
+{% endblock %}
