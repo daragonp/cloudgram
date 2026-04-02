@@ -227,6 +227,9 @@
             <a href="{{ url_for('db_explorer_list') }}" class="list-group-item list-group-item-action bg-transparent border-0 py-3 mb-2 nav-btn {% if request.endpoint == 'db_explorer_list' or request.endpoint == 'db_explorer_table' %}active{% endif %}">
                 <i class="bi bi-database"></i> DB Explorer
             </a>
+            <a href="{{ url_for('auth_settings') }}" class="list-group-item list-group-item-action bg-transparent border-0 py-3 mb-2 nav-btn {% if request.endpoint == 'auth_settings' %}active{% endif %}">
+                <i class="bi bi-shield-lock-fill"></i> Conexiones Cloud
+            </a>
             
             <div class="mt-4 mb-2 px-3 text-muted" style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px;">Sistema</div>
             <a href="{{ url_for('perfil') }}" class="list-group-item list-group-item-action bg-transparent border-0 py-3 mb-2 nav-btn {% if request.endpoint == 'perfil' %}active{% endif %}">

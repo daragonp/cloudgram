@@ -1,0 +1,210 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <div>
+        <h2 class="fw-bold mb-1 text-white">Gestión de Autenticación</h2>
+        <p class="text-muted mb-0">Renueva tus tokens de Dropbox y Google Drive directamente desde aquí.</p>
+    </div>
+    <a href="{{ url_for('dashboard') }}" class="btn btn-dark border-secondary">
+        <i class="bi bi-arrow-left me-2"></i> Volver al Dashboard
+    </a>
+</div>
+
+<div class="row g-4">
+    <!-- COLUMNA DROPBOX -->
+    <div class="col-lg-6">
+        <div class="glass-panel h-100 p-4 d-flex flex-column" style="border-top: 3px solid #0061ff;">
+            <div class="d-flex align-items-center gap-3 mb-4">
+                <div class="bg-primary bg-opacity-10 p-3 rounded-circle text-primary">
+                    <i class="bi bi-dropbox fs-3"></i>
+                </div>
+                <div>
+                    <h5 class="fw-bold text-white mb-0">Dropbox OAuth</h5>
+                    <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Refresh Token Flow</small>
+                </div>
+            </div>
+
+            <div id="dbx-step-1" class="auth-step">
+                <p class="text-muted small mb-4">Dropbox requiere un token de acceso "offline" para que el bot pueda conectarse permanentemente. Haz clic abajo para empezar.</p>
+                <button class="btn btn-primary w-100 py-3 fw-bold" onclick="startDropbox()">
+                    <i class="bi bi-rocket-takeoff me-2"></i> 1. Iniciar Vinculación
+                </button>
+            </div>
+
+            <div id="dbx-step-2" class="auth-step d-none">
+                <div class="alert alert-info bg-opacity-10 border-info text-info small mb-4">
+                    <i class="bi bi-info-circle me-2"></i>
+                    Abre la URL de abajo, autoriza la app y pega el código que te den.
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-muted small">URL de Autorización:</label>
+                    <div class="input-group">
+                        <input type="text" id="dbx-url" class="form-control form-control-sm bg-dark border-secondary text-info" readonly>
+                        <a href="#" id="dbx-link" target="_blank" class="btn btn-outline-info">Abrir <i class="bi bi-box-arrow-up-right ms-1"></i></a>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-muted small">Código de Dropbox:</label>
+                    <input type="text" id="dbx-code" class="form-control border-primary" placeholder="Pega el código aquí...">
+                </div>
+                <button class="btn btn-success w-100 py-2 fw-bold" onclick="finishDropbox()">
+                    <i class="bi bi-check-lg me-2"></i> Finalizar y Obtener Token
+                </button>
+            </div>
+
+            <div id="dbx-result" class="auth-step d-none mt-auto pt-4">
+                <label class="form-label text-success fw-bold small"><i class="bi bi-stars me-1"></i> Nuevo REFRESH_TOKEN:</label>
+                <div class="position-relative">
+                    <textarea id="dbx-token" class="form-control bg-dark text-white font-monospace mb-3" rows="3" readonly style="font-size: 0.85rem;"></textarea>
+                    <button class="btn btn-sm btn-outline-light position-absolute top-0 end-0 m-2" onclick="copyToClipboard('dbx-token')">
+                        <i class="bi bi-copy"></i>
+                    </button>
+                </div>
+                <div class="alert alert-warning small mb-0 border-0 bg-warning bg-opacity-10 text-warning">
+                    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                    Copia este valor en tu variable <code>DROPBOX_REFRESH_TOKEN</code> en Railway/Render.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- COLUMNA GOOGLE DRIVE -->
+    <div class="col-lg-6">
+        <div class="glass-panel h-100 p-4 d-flex flex-column" style="border-top: 3px solid #34a853;">
+            <div class="d-flex align-items-center gap-3 mb-4">
+                <div class="bg-success bg-opacity-10 p-3 rounded-circle text-success">
+                    <i class="bi bi-google fs-3"></i>
+                </div>
+                <div>
+                    <h5 class="fw-bold text-white mb-0">Google Drive API</h5>
+                    <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Credentials JSON Flow</small>
+                </div>
+            </div>
+
+            <div id="drive-step-1" class="auth-step">
+                <p class="text-muted small mb-4">Google Drive utiliza un sistema de JSON completo. Este proceso generará el bloque necesario para tus variables de entorno.</p>
+                <button class="btn btn-success w-100 py-3 fw-bold" onclick="startDrive()">
+                    <i class="bi bi-shield-lock me-2"></i> 1. Generar URL de Acceso
+                </button>
+            </div>
+
+            <div id="drive-step-2" class="auth-step d-none">
+                <div class="alert alert-info bg-opacity-10 border-info text-info small mb-4">
+                    <i class="bi bi-info-circle me-2"></i>
+                    Entra con tu cuenta de Google, permite el acceso y copia el código de respuesta.
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-muted small">URL de Google:</label>
+                    <div class="input-group">
+                        <input type="text" id="drive-url" class="form-control form-control-sm bg-dark border-secondary text-info" readonly>
+                        <a href="#" id="drive-link" target="_blank" class="btn btn-outline-info">Abrir <i class="bi bi-box-arrow-up-right ms-1"></i></a>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-muted small">Código de Google:</label>
+                    <input type="text" id="drive-code" class="form-control border-success" placeholder="Pega el código aquí...">
+                </div>
+                <button class="btn btn-success w-100 py-2 fw-bold" onclick="finishDrive()">
+                    <i class="bi bi-check-lg me-2"></i> Generar JSON Final
+                </button>
+            </div>
+
+            <div id="drive-result" class="auth-step d-none mt-auto pt-4">
+                <label class="form-label text-success fw-bold small"><i class="bi bi-code-square me-1"></i> NUEVO CREDENTIALS JSON:</label>
+                <div class="position-relative">
+                    <textarea id="drive-token" class="form-control bg-dark text-white font-monospace mb-3" rows="6" readonly style="font-size: 0.75rem; line-height: 1.2;"></textarea>
+                    <button class="btn btn-sm btn-outline-light position-absolute top-0 end-0 m-2" onclick="copyToClipboard('drive-token')">
+                        <i class="bi bi-copy"></i>
+                    </button>
+                </div>
+                <div class="alert alert-warning small mb-0 border-0 bg-warning bg-opacity-10 text-warning">
+                    <i class="bi bi-info-circle-fill me-2"></i>
+                    Este JSON contiene tu Refresh Token. Reemplaza tu variable en la nube.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+async function startDropbox() {
+    try {
+        const res = await fetch('/auth/dropbox/start', { 
+            method: 'POST',
+            headers: { 'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content }
+        });
+        const data = await res.json();
+        if (data.ok) {
+            document.getElementById('dbx-url').value = data.url;
+            document.getElementById('dbx-link').href = data.url;
+            document.getElementById('dbx-step-1').classList.add('d-none');
+            document.getElementById('dbx-step-2').classList.remove('d-none');
+        } else {
+            alert("Error: " + data.error);
+        }
+    } catch (e) { alert("Error de red: " + e); }
+}
+
+async function finishDropbox() {
+    const code = document.getElementById('dbx-code').value.trim();
+    if (!code) return alert("Pega el código primero");
+    
+    try {
+        const formData = new FormData();
+        formData.append('code', code);
+        formData.append('csrf_token', document.querySelector('meta[name="csrf-token"]').content);
+        
+        const res = await fetch('/auth/dropbox/finish', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.ok) {
+            document.getElementById('dbx-token').value = data.refresh_token;
+            document.getElementById('dbx-step-2').classList.add('d-none');
+            document.getElementById('dbx-result').classList.remove('d-none');
+        } else { alert("Error vinculando: " + data.error); }
+    } catch (e) { alert("Error de servidor: " + e); }
+}
+
+async function startDrive() {
+    try {
+        const res = await fetch('/auth/drive/start', { 
+            method: 'POST',
+            headers: { 'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content }
+        });
+        const data = await res.json();
+        if (data.ok) {
+            document.getElementById('drive-url').value = data.url;
+            document.getElementById('drive-link').href = data.url;
+            document.getElementById('drive-step-1').classList.add('d-none');
+            document.getElementById('drive-step-2').classList.remove('d-none');
+        } else { alert("Error Google: " + data.error); }
+    } catch (e) { alert("Error conexión: " + e); }
+}
+
+async function finishDrive() {
+    const code = document.getElementById('drive-code').value.trim();
+    if (!code) return alert("Pega el código primero");
+    
+    try {
+        const formData = new FormData();
+        formData.append('code', code);
+        formData.append('csrf_token', document.querySelector('meta[name="csrf-token"]').content);
+        
+        const res = await fetch('/auth/drive/finish', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.ok) {
+            document.getElementById('drive-token').value = data.token_json;
+            document.getElementById('drive-step-2').classList.add('d-none');
+            document.getElementById('drive-result').classList.remove('d-none');
+        } else { alert("Error Google: " + data.error); }
+    } catch (e) { alert("Error vinculando: " + e); }
+}
+
+function copyToClipboard(id) {
+    const copyText = document.getElementById(id);
+    copyText.select();
+    document.execCommand("copy");
+    alert("Copiado al portapapeles ✨");
+}
+</script>
+{% endblock %}

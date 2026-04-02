@@ -327,6 +327,11 @@
                 </div>
                 <p id="embedStatus" class="small text-muted text-center mt-2 mb-0">En progreso...</p>
             </div>
+            <div class="modal-footer border-top" style="border-color: rgba(255,255,255,0.05) !important;">
+                <button type="button" id="btnStopEmbeddings" class="btn btn-outline-danger btn-sm px-4" onclick="stopEmbeddings()">
+                    <i class="bi bi-stop-fill"></i> Detener Proceso
+                </button>
+            </div>
         </div>
     </div>
 </div>
@@ -412,9 +417,13 @@ function startIndexing() {
         });
 }
 
+let embedEventSource = null;
+
 function startEmbeddings() {
     const btn = document.getElementById('btnEmbeddings');
+    const btnStop = document.getElementById('btnStopEmbeddings');
     btn.disabled = true;
+    if (btnStop) btnStop.disabled = false;
     
     // Leer el valor del radio seleccionado
     const lote = document.querySelector('input[name="embedLote"]:checked')?.value ?? '10';
@@ -443,8 +452,8 @@ function startEmbeddings() {
     fetch('/run-embeddings', { method: 'POST', body: formData })
         .then(res => res.json())
         .then(() => {
-            const evtSrc = new EventSource('/progress-embeddings');
-            evtSrc.onmessage = function(event) {
+            embedEventSource = new EventSource('/progress-embeddings');
+            embedEventSource.onmessage = function(event) {
                 const data = JSON.parse(event.data);
                 const msg = data.message || '';
                 
@@ -457,19 +466,21 @@ function startEmbeddings() {
                 document.getElementById('embedContador').textContent = procesados;
                 document.getElementById('embedErrores').textContent = errores;
 
-                if (msg.includes('FINALIZADO') || msg.includes('Finalizado') || msg.includes('Completado')) {
-                    evtSrc.close();
+                if (msg.includes('FINALIZADO') || msg.includes('Finalizado') || msg.includes('Completado') || msg.includes('Detenido')) {
+                    if (embedEventSource) embedEventSource.close();
                     document.getElementById('embedProgressBar').style.width = '100%';
                     document.getElementById('embedProgressBar').classList.remove('progress-bar-animated');
                     document.getElementById('embedStatus').innerHTML = `<span class='text-success fw-bold'><i class='bi bi-check-circle'></i> ${msg}</span>`;
                     btn.disabled = false;
+                    if (btnStop) btnStop.disabled = true;
                     setTimeout(() => location.reload(), 3000);
                 }
             };
-            evtSrc.onerror = function() {
-                evtSrc.close();
+            embedEventSource.onerror = function() {
+                if (embedEventSource) embedEventSource.close();
                 document.getElementById('embedStatus').innerHTML = "<span class='text-warning fw-bold'><i class='bi bi-exclamation-triangle'></i> Conexión perdida o proceso terminado.</span>";
                 btn.disabled = false;
+                if (btnStop) btnStop.disabled = true;
             };
         })
         .catch(err => {
@@ -479,8 +490,34 @@ function startEmbeddings() {
         });
 }
 
-// Aplicar anchos desde data-width (evita Jinja2 en atributos style)
+function stopEmbeddings() {
+    const btnStop = document.getElementById('btnStopEmbeddings');
+    if (btnStop) btnStop.disabled = true;
+    document.getElementById('embedStatus').innerHTML = "🛑 Enviando petición de parada...";
+    
+    const formData = new FormData();
+    formData.append('csrf_token', document.querySelector('meta[name="csrf-token"]')?.content || '');
+
+    fetch('/stop-embeddings', { method: 'POST', body: formData })
+        .then(res => res.json())
+        .catch(err => console.error("Error stopping:", err));
+}
+
 document.addEventListener('DOMContentLoaded', function() {
+
+// Detener proceso si se cierra el modal manualmente
+    const m = document.getElementById('embeddingsModal');
+    if (m) {
+        m.addEventListener('hide.bs.modal', function() {
+            if (embedEventSource) {
+                console.log("Modal closed, stopping embedding process...");
+                stopEmbeddings();
+                embedEventSource.close();
+                embedEventSource = null;
+            }
+        });
+    }
+
     document.querySelectorAll('[data-width]').forEach(function(el) {
         el.style.width = el.getAttribute('data-width') + '%';
     });

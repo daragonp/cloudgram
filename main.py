@@ -898,6 +898,12 @@ async def post_init(application):
     await ensure_category_folders()
     db.log_event("INFO", "SISTEMA", "Bot iniciado correctamente y menús registrados.")
 
+async def post_stop(application):
+    """Acciones a realizar al detener el bot"""
+    print("\n🛑 Deteniendo CloudGram PRO...")
+    await AIHandler.close_async_client()
+    db.log_event("INFO", "SISTEMA", "Bot detenido correctamente.")
+
 async def error_handler(update, context):
     if isinstance(context.error, NetworkError):
         print(f"⚠️ Error de red temporal en Telegram: {context.error}")
@@ -909,7 +915,7 @@ if __name__ == '__main__':
     if not os.path.exists("descargas"):
         os.makedirs("descargas")
     
-    app = ApplicationBuilder().token(os.getenv("TELEGRAM_BOT_TOKEN")).post_init(post_init).build()
+    app = ApplicationBuilder().token(os.getenv("TELEGRAM_BOT_TOKEN")).post_init(post_init).post_stop(post_stop).build()
     
     app.add_handler(TypeHandler(Update, auth_middleware), group=-1)
 

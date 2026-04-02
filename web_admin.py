@@ -16,11 +16,25 @@ from src.services.dropbox_service import DropboxService
 from src.services.google_drive_service import GoogleDriveService
 from src.scripts.refresh_drive_token import refresh_google_token
 
+# --- AUTH LIBRARIES ---
+import dropbox
+from google_auth_oauthlib.flow import Flow
+
 # Inicialización
 db = DatabaseHandler()
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev_key_only")
 csrf = CSRFProtect(app)
+
+# Estado global para control de procesos (Cancellation tokens)
+app.stop_embeddings = False
+
+# Almacén temporal de flujos de autenticación (En memoria)
+# En una app multi-usuario real usaríamos una base de datos o Redis
+app.auth_flows = {
+    'dropbox': {}, # user_id -> flow
+    'google': {}   # user_id -> flow
+}
 
 # --- LOGO / FAVICON HANDLING ------------------------------------------------
 # the admin logo may now live inside the static folder (static/logo/logo.JPG)
@@ -405,7 +419,11 @@ def run_embeddings_endpoint():
                 async def cb(msg):
                     app.embed_queue.put(msg)
 
-                result = await generar_embeddings_pendientes(limite, cb)
+                # Pasamos la función que verifica si el usuario pidió detenerse
+                def check_stop():
+                    return getattr(app, 'stop_embeddings', False)
+
+                result = await generar_embeddings_pendientes(limite, cb, check_stop)
                 app.embed_queue.put(f"✅ Finalizado: {result['procesados']} embeddings, {result['errores']} errores.")
                 app.embed_queue.put(None)  # Señal de fin
 
@@ -417,7 +435,17 @@ def run_embeddings_endpoint():
             loop.close()
 
     threading.Thread(target=thread_wrapper, daemon=True).start()
+    app.stop_embeddings = False  # Resetear flag de parada al iniciar
     return {"status": "success", "limite": limite}, 200
+
+@app.route('/stop-embeddings', methods=['POST'])
+@login_required
+def stop_embeddings_endpoint():
+    """Establece el flag de parada para detener el proceso de embeddings."""
+    app.stop_embeddings = True
+    if hasattr(app, 'embed_queue') and app.embed_queue:
+        app.embed_queue.put("🛑 Recibida petición de parada. Finalizando lote...")
+    return {"status": "success", "message": "Petición de parada enviada"}, 200
 
 
 @app.route('/progress-embeddings')
@@ -497,6 +525,138 @@ def fix_drive_token():
     else:
         flash("No se pudo restaurar la conexión. Revisa tus variables en Railway.", "error")
     return redirect(url_for('dashboard'))
+
+
+# --- GESTIÓN DE AUTENTICACIÓN (NUEVO) ---
+
+@app.route('/auth-settings')
+@login_required
+def auth_settings():
+    """Muestra la página de configuración de tokens Cloud."""
+    return render_template('auth_settings.html')
+
+@app.route('/auth/dropbox/start', methods=['POST'])
+@login_required
+def auth_dropbox_start():
+    """Inicia el flujo de OAuth para Dropbox."""
+    try:
+        app_key = os.getenv("DROPBOX_APP_KEY")
+        app_secret = os.getenv("DROPBOX_APP_SECRET")
+        
+        if not app_key or not app_secret:
+            return {"ok": False, "error": "Faltan DROPBOX_APP_KEY o APP_SECRET en el .env"}, 400
+            
+        # Flujo sin redirección (manual code)
+        flow = dropbox.DropboxOAuth2FlowNoRedirect(
+            app_key, 
+            app_secret, 
+            token_access_type='offline'
+        )
+        
+        auth_url = flow.start()
+        
+        # Guardamos el flujo para el siguiente paso
+        app.auth_flows['dropbox'][current_user.id] = flow
+        
+        return {"ok": True, "url": auth_url}, 200
+    except Exception as e:
+        return {"ok": False, "error": str(e)}, 500
+
+@app.route('/auth/dropbox/finish', methods=['POST'])
+@login_required
+def auth_dropbox_finish():
+    """Finaliza el flujo de Dropbox con el código proporcionado."""
+    try:
+        code = request.form.get('code', '').strip()
+        if not code:
+            return {"ok": False, "error": "El código es obligatorio"}, 400
+            
+        flow = app.auth_flows['dropbox'].get(current_user.id)
+        if not flow:
+            return {"ok": False, "error": "Sesión de autenticación expirada o no iniciada"}, 400
+            
+        oauth_result = flow.finish(code)
+        
+        # Limpiar flujo
+        app.auth_flows['dropbox'].pop(current_user.id, None)
+        
+        return {
+            "ok": True, 
+            "refresh_token": oauth_result.refresh_token,
+            "message": "¡Token obtenido con éxito!"
+        }, 200
+    except Exception as e:
+        return {"ok": False, "error": str(e)}, 500
+
+@app.route('/auth/drive/start', methods=['POST'])
+@login_required
+def auth_drive_start():
+    """Inicia el flujo de OAuth para Google Drive."""
+    try:
+        client_id = os.getenv("GOOGLE_CLIENT_ID")
+        client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+        
+        if not client_id or not client_secret:
+            return {"ok": False, "error": "Faltan GOOGLE_CLIENT_ID o CLIENT_SECRET en el .env"}, 400
+            
+        client_config = {
+            "installed": {
+                "client_id": client_id,
+                "project_id": "cloudgram-pro",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "client_secret": client_secret,
+                "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob", "http://localhost"]
+            }
+        }
+        
+        scopes = ["https://www.googleapis.com/auth/drive.file"]
+        
+        # Usamos 'urn:ietf:wg:oauth:2.0:oob' si la cuenta lo permite, 
+        # pero Google lo está retirando. En modo web, 'postmessage' o 
+        # una URL de redirección real es mejor.
+        flow = Flow.from_client_config(
+            client_config, 
+            scopes=scopes, 
+            redirect_uri='urn:ietf:wg:oauth:2.0:oob'
+        )
+        
+        auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
+        
+        app.auth_flows['google'][current_user.id] = flow
+        
+        return {"ok": True, "url": auth_url}, 200
+    except Exception as e:
+        # Fallback a un error descriptivo
+        return {"ok": False, "error": f"Error configurando flujo de Google: {str(e)}"}, 500
+
+@app.route('/auth/drive/finish', methods=['POST'])
+@login_required
+def auth_drive_finish():
+    """Finaliza el flujo de Drive con el código proporcionado."""
+    try:
+        code = request.form.get('code', '').strip()
+        if not code:
+            return {"ok": False, "error": "El código es obligatorio"}, 400
+            
+        flow = app.auth_flows['google'].get(current_user.id)
+        if not flow:
+            return {"ok": False, "error": "Sesión de autenticación expirada o no iniciada"}, 400
+            
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+        
+        # Limpiar flujo
+        app.auth_flows['google'].pop(current_user.id, None)
+        
+        return {
+            "ok": True, 
+            "token_json": creds.to_json(),
+            "message": "¡Token de Drive generado!"
+        }, 200
+    except Exception as e:
+        return {"ok": False, "error": str(e)}, 500
+
 
 @app.route('/archivos-errores')
 @login_required

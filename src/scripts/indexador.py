@@ -282,7 +282,7 @@ async def procesar_un_archivo_core(fid, name, servicio, cloud_url, content_text,
         return False
 
 
-async def generar_embeddings_pendientes(limite: int, progreso_callback=None):
+async def generar_embeddings_pendientes(limite: int, progreso_callback=None, check_stop_callback=None):
     """
     Genera embeddings para archivos que YA están en la BD pero sin embedding.
     """
@@ -320,6 +320,11 @@ async def generar_embeddings_pendientes(limite: int, progreso_callback=None):
     reporte = {"procesados": 0, "errores": 0}
 
     for i, (fid, name, servicio, cloud_url, content_text) in enumerate(pendientes, 1):
+        # 🟢 Verificar si el usuario pidió detener el proceso
+        if check_stop_callback and check_stop_callback():
+            await log("🛑 Proceso detenido por el usuario.")
+            break
+
         await log(f"[{i}/{total}] Procesando: {name} ({servicio})")
         
         try:

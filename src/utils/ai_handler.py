@@ -51,6 +51,9 @@ class AIHandler:
     EMBEDDING_MODELS = ["gemini-embedding-001", "gemini-embedding-2-preview"]
     CHAT_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-flash-lite"]
     
+    # Cliente asíncrono compartido (Singleton)
+    _async_client = None
+    
     @staticmethod
     def _get_client():
         """Retorna cliente síncrono para chat/vision"""
@@ -61,11 +64,24 @@ class AIHandler:
 
     @staticmethod
     def _get_async_client():
-        """Retorna cliente asíncrono para operaciones no bloqueantes"""
-        return AsyncOpenAI(
-            api_key=GEMINI_API_KEY,
-            base_url=GEMINI_BASE_URL
-        )
+        """Retorna cliente asíncrono singleton para operaciones no bloqueantes"""
+        if AIHandler._async_client is None:
+            AIHandler._async_client = AsyncOpenAI(
+                api_key=GEMINI_API_KEY,
+                base_url=GEMINI_BASE_URL
+            )
+        return AIHandler._async_client
+
+    @staticmethod
+    async def close_async_client():
+        """Cierra el cliente asíncrono si existe para liberar recursos"""
+        if AIHandler._async_client:
+            try:
+                await AIHandler._async_client.close()
+                AIHandler._async_client = None
+                logger.info("🔌 Cliente asíncrono de IA cerrado correctamente.")
+            except Exception as e:
+                logger.warning(f"⚠️ Error cerrando cliente IA: {e}")
 
     @staticmethod
     async def get_embedding(text):
