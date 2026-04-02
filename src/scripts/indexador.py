@@ -8,7 +8,7 @@ import json
 
 import threading
 from src.database.db_handler import DatabaseHandler
-from src.utils.ai_handler import AIHandler
+from src.utils.ai_handler import AIHandler, QuotaExceededError
 from src.services.dropbox_service import DropboxService
 from src.services.google_drive_service import GoogleDriveService
 from telegram import Bot
@@ -127,8 +127,16 @@ async def _indexar_si_falta(name, servicio, reporte, progreso_callback=None):
                 desc_tecnica = f"Contenedor/Binario {extension.upper()}"
                 texto_limpio = None
         
+        except QuotaExceededError as qe:
+            print(f"🚨 Cuota agotada para {name}: {qe}")
+            if progreso_callback: await progreso_callback(f"🚨 Cuota IA agotada: {qe}")
+            # No registramos con IA si la cuota se agotó
+            resumen = f"Archivo .{extension} registrado (Cuota IA agotada)."
+            vector = None
+            texto_limpio = None
         except Exception as ai_err:
             print(f"⚠️ IA saltada para {name}: {ai_err}")
+            if progreso_callback: await progreso_callback(f"⚠️ IA saltada: {ai_err}")
             resumen = f"Archivo .{extension} registrado (Análisis IA no disponible)."
             texto_limpio = None
         # 3. Registro en DB con las nuevas columnas
@@ -202,12 +210,10 @@ async def procesar_un_archivo_core(fid, name, servicio, cloud_url, content_text,
             file_missing = False
             try:
                 if servicio == 'dropbox':
-                    try:
-                        success = await dropbox_svc.download_file(f"/{name}", local_path)
-                    except Exception as e:
-                        if "not_found" in str(e).lower():
-                            file_missing = True
-                        raise e
+                    # Usar búsqueda por nombre para encontrarlo en cualquier carpeta (similar a Drive)
+                    success = await dropbox_svc.download_file_by_name(name, local_path)
+                    if not success:
+                        file_missing = True
                 elif servicio == 'drive':
                     success = await drive_svc.download_file_by_name(name, local_path)
                     if not success:
@@ -228,6 +234,9 @@ async def procesar_un_archivo_core(fid, name, servicio, cloud_url, content_text,
                     await log(f"   🧠 Extrayendo texto ({extension})...")
                     texto = await AIHandler.extract_text(local_path)
                     texto_limpio = limpiar_y_recortar_texto(texto)
+                except QuotaExceededError as qe:
+                    await log(f"   🚨 {qe}")
+                    raise qe # Re-lanzar para que el bucle superior se detenga
                 except Exception as ai_err:
                     await log(f"   ⚠️ Error IA: {ai_err}")
                 finally:
@@ -236,11 +245,14 @@ async def procesar_un_archivo_core(fid, name, servicio, cloud_url, content_text,
         
         # Generar embedding + resumen si tenemos texto
         if texto_limpio and len(texto_limpio.strip()) > 20:
-            await log(f"   🤖 Generando resumen y embedding...")
-            resumen, vector = await asyncio.gather(
-                AIHandler.generate_summary(texto_limpio),
-                AIHandler.get_embedding(texto_limpio)
-            )
+            try:
+                resumen, vector = await asyncio.gather(
+                    AIHandler.generate_summary(texto_limpio),
+                    AIHandler.get_embedding(texto_limpio)
+                )
+            except QuotaExceededError as qe:
+                await log(f"   🚨 {qe}")
+                raise qe
         else:
             resumen = f"Archivo .{extension} sin contenido de texto extraíble."
             texto_limpio = None
@@ -310,11 +322,15 @@ async def generar_embeddings_pendientes(limite: int, progreso_callback=None):
     for i, (fid, name, servicio, cloud_url, content_text) in enumerate(pendientes, 1):
         await log(f"[{i}/{total}] Procesando: {name} ({servicio})")
         
-        ok = await procesar_un_archivo_core(fid, name, servicio, cloud_url, content_text, log)
-        if ok:
-            reporte["procesados"] += 1
-        else:
-            reporte["errores"] += 1
+        try:
+            ok = await procesar_un_archivo_core(fid, name, servicio, cloud_url, content_text, log)
+            if ok:
+                reporte["procesados"] += 1
+            else:
+                reporte["errores"] += 1
+        except QuotaExceededError:
+            await log("🛑 Deteniendo proceso por falta de cuota. Reintenta en unos minutos.")
+            break
 
         # Pausa para respetar rate-limit de Gemini Free Tier
         await asyncio.sleep(4)

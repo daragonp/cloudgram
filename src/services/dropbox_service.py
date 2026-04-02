@@ -37,12 +37,45 @@ class DropboxService(CloudService):
 
     async def download_file(self, cloud_path, local_path):
         if not self.dbx: return False
+        # No atrapamos excepciones aquí para que el llamador pueda detectar 
+        # errores específicos de la API de Dropbox como 'not_found'
+        self.dbx.files_download_to_file(local_path, cloud_path)
+        return True
+
+    async def download_file_by_name(self, file_name, local_path):
+        """Busca un archivo por nombre en TODO el Dropbox y lo descarga."""
+        if not self.dbx: return False
         try:
-            # cloud_path debe iniciar con "/" (ej: /foto.jpg)
-            self.dbx.files_download_to_file(local_path, cloud_path)
-            return True
+            # 1. Intentar descarga directa (lo más rápido)
+            try:
+                return await self.download_file(f"/{file_name}", local_path)
+            except:
+                pass # Si falla en raíz, procedemos a buscar
+
+            # 2. Buscar globalmente
+            print(f"🔍 Dropbox: Buscando '{file_name}' en todas las carpetas...")
+            res = self.dbx.files_search_v2(query=file_name)
+            
+            if not res.matches:
+                return False
+            
+            # Buscar el mejor match (que el nombre coincida exactamente)
+            best_match = None
+            for match in res.matches:
+                metadata = match.metadata.get_metadata()
+                if metadata.name == file_name:
+                    best_match = metadata.path_display
+                    break
+            
+            if not best_match:
+                # Si no hay exacto, probamos con el primero que tenga el nombre
+                best_match = res.matches[0].metadata.get_metadata().path_display
+
+            print(f"📍 Dropbox: Archivo encontrado en '{best_match}'. Descargando...")
+            return await self.download_file(best_match, local_path)
+
         except Exception as e:
-            print(f"Error descargando de Dropbox: {e}")
+            print(f"❌ Error buscando/descargando de Dropbox: {e}")
             return False
 
     async def get_link(self, cloud_path):

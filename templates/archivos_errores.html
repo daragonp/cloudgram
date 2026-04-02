@@ -209,9 +209,9 @@ function generateEmbed(id) {
             }, 1000);
             
             eventSource.close();
-        } else if (msg.includes("❌") || msg.includes("⚠️")) {
+        } else if (msg.includes("❌") || msg.includes("⚠️") || msg.includes("🚨")) {
             appendLog(`<span class="text-danger">${msg}</span>`);
-            if (msg.includes("Error crítico") || msg.includes("❌")) {
+            if (msg.includes("Error crítico") || msg.includes("❌") || msg.includes("🚨")) {
                 modalStatusText.innerText = 'Error en el proceso';
                 modalStatusText.className = 'text-danger small fw-bold';
                 modalSpinner.style.display = 'none';

@@ -33,7 +33,7 @@ from src.init_services import db, dropbox_svc, drive_svc, openai_client
 # 3. IMPORTACIÓN DE HANDLERS
 from src.handlers.message_handlers import start, handle_any_file, show_cloud_menu, get_file_category, FILE_CATEGORIES
 from src.handlers.auth_handler import auth_middleware
-from src.utils.ai_handler import AIHandler
+from src.utils.ai_handler import AIHandler, QuotaExceededError
 
 # ================================================================================================
 # CACHE GLOBAL DE CARPETAS
@@ -417,21 +417,34 @@ async def upload_process(update, context, target_files_info: list, predefined_em
                 await tg_f.download_to_drive(local_path)
             except: continue
 
-        texto = await AIHandler.extract_text(local_path)
-        vector = predefined_embedding
-        resumen = None
-        ext = file_name.split('.')[-1].lower()
-        desc_tec = f"Archivo {ext.upper()}"
+        try:
+            texto = await AIHandler.extract_text(local_path)
+            vector = predefined_embedding
+            resumen = None
+            ext = file_name.split('.')[-1].lower()
+            desc_tec = f"Archivo {ext.upper()}"
 
-        if texto and texto.strip():
-            print(f"🧠 IA: Texto extraído de '{file_name}' ({len(texto)} chars). Generando embedding...")
-            if not vector:
-                vector = await AIHandler.get_embedding(texto)
-                print(f"🔢 Embedding: {'✅ OK (' + str(len(vector)) + ' dims)' if vector else '❌ FALLÓ (None)'}")
-            resumen = await AIHandler.generate_summary(texto)
-        else:
-            print(f"⚠️ IA: No se extrajo texto de '{file_name}' (ext={ext}). Sin embedding.")
-            resumen = f"Documento binario/comprimido ({ext}). No se extrajo texto."
+            if texto and texto.strip():
+                print(f"🧠 IA: Texto extraído de '{file_name}' ({len(texto)} chars). Generando embedding...")
+                if not vector:
+                    vector = await AIHandler.get_embedding(texto)
+                    print(f"🔢 Embedding: {'✅ OK (' + str(len(vector)) + ' dims)' if vector else '❌ FALLÓ (None)'}")
+                resumen = await AIHandler.generate_summary(texto)
+            else:
+                print(f"⚠️ IA: No se extrajo texto de '{file_name}' (ext={ext}). Sin embedding.")
+                resumen = f"Documento binario/comprimido ({ext}). No se extrajo texto."
+        except QuotaExceededError as qe:
+            print(f"⚠️ Cuota de IA agotada enviando desde bot: {qe}")
+            texto = None
+            vector = None
+            resumen = f"IA temporalmente saturada (429). {qe}"
+            ext = file_name.split('.')[-1].lower()
+            desc_tec = f"Archivo {ext.upper()}"
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"⏳ *IA Saturada:* `{file_name}` se subirá a la nube, pero el análisis inteligente se hará más tarde.",
+                parse_mode=ParseMode.MARKDOWN
+            )
 
         category = get_file_category(file_name) or "Otros"
         
@@ -623,6 +636,8 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.edit_text(f"🤖 Entendido. Buscando `{semantic_query}` en archivos tipo: {', '.join(file_types).upper()}...")
 
         query_vector = await AIHandler.get_embedding(semantic_query)
+    except QuotaExceededError as qe:
+        return await msg.edit_text(f"⚠️ *IA temporalmente saturada:*\n{qe}\n\nIntenta una búsqueda por nombre tradicional o espera un minuto.")
         
         if not query_vector:
             return await msg.edit_text("❌ Error generando embedding. Verifica tu API key de Gemini.")

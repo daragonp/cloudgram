@@ -453,7 +453,7 @@ function startEmbeddings() {
                 
                 // Contar éxitos y errores desde los mensajes
                 if (msg.includes('Embedding guardado')) procesados++;
-                if (msg.includes('Error en') || msg.includes('error_limit')) errores++;
+                if (msg.includes('Error en') || msg.includes('error_limit') || msg.includes('🚨')) errores++;
                 document.getElementById('embedContador').textContent = procesados;
                 document.getElementById('embedErrores').textContent = errores;
 

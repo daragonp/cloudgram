@@ -5,6 +5,7 @@ Soporta: Embeddings, Transcripción de Audio, Análisis de Imágenes, Resúmenes
 """
 import fitz  # PyMuPDF
 import docx
+import re
 from PIL import Image
 import os
 import numpy as np 
@@ -25,7 +26,22 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+class QuotaExceededError(Exception):
+    """Excepción para cuando se agota la cuota (429) de la API de Gemini."""
+    def __init__(self, message, retry_after=None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
 class AIHandler:
+    @staticmethod
+    def _parse_retry_after(error_msg):
+        """Intenta extraer el tiempo de espera del mensaje de error de Google."""
+        # Buscar "Please retry in 58.99s" o "retryDelay: 58s"
+        match = re.search(r"retry in ([\d\.]+)s", error_msg)
+        if match: return match.group(1)
+        match = re.search(r"retryDelay[\'\"]?\s*:\s*[\'\"]?([\d\.]+)s", error_msg)
+        if match: return match.group(1)
+        return None
     """
     Manejador de IA con soporte para Gemini API.
     Incluye fallback automático entre modelos y manejo robusto de errores.
@@ -112,12 +128,21 @@ class AIHandler:
                         return avg_embedding
                         
                 except Exception as model_error:
+                    error_msg = str(model_error)
+                    if "429" in error_msg or "ResourceExhausted" in error_msg or "quota" in error_msg.lower():
+                        retry = AIHandler._parse_retry_after(error_msg)
+                        wait_msg = f" (Reintenta en {retry}s)" if retry else ""
+                        logger.error(f"🚨 Cuota agotada en {model_name}: {error_msg}")
+                        raise QuotaExceededError(f"Cuota de IA agotada{wait_msg}", retry_after=retry)
+                    
                     logger.warning(f"⚠️ Modelo {model_name} falló: {model_error}")
                     continue
             
             logger.error("❌ Todos los modelos de embedding fallaron")
             return None
                 
+        except QuotaExceededError:
+            raise
         except Exception as e:
             logger.error(f"❌ Error crítico en Embeddings: {e}")
             return None
@@ -184,12 +209,21 @@ class AIHandler:
                     logger.info(f"✅ Imagen analizada con {model}: {len(result)} chars")
                     return result
                 except Exception as model_error:
+                    error_msg = str(model_error)
+                    if "429" in error_msg or "ResourceExhausted" in error_msg or "quota" in error_msg.lower():
+                        retry = AIHandler._parse_retry_after(error_msg)
+                        wait_msg = f" (Reintenta en {retry}s)" if retry else ""
+                        logger.error(f"🚨 Cuota agotada en {model} (Visión): {error_msg}")
+                        raise QuotaExceededError(f"Cuota de IA agotada en Visión{wait_msg}", retry_after=retry)
+
                     logger.warning(f"⚠️ Modelo {model} falló para visión: {model_error}")
                     continue
             
             logger.warning("No se pudo analizar la imagen con ningún modelo disponible.")
             return ""
             
+        except QuotaExceededError:
+            raise
         except Exception as e:
             logger.error(f"❌ Error en Visión IA: {e}")
             return ""
@@ -288,6 +322,13 @@ class AIHandler:
                     return text_result
                     
                 except Exception as model_error:
+                    error_msg = str(model_error)
+                    if "429" in error_msg or "ResourceExhausted" in error_msg or "quota" in error_msg.lower():
+                        retry = AIHandler._parse_retry_after(error_msg)
+                        wait_msg = f" (Reintenta en {retry}s)" if retry else ""
+                        logger.error(f"🚨 Cuota agotada en {model_name} (Audio): {error_msg}")
+                        raise QuotaExceededError(f"Cuota de IA agotada en Audio{wait_msg}", retry_after=retry)
+
                     with open(log_file, "a") as log:
                         log.write(f"⚠️ Modelo {model_name} falló: {model_error}\n")
                     continue
@@ -297,6 +338,8 @@ class AIHandler:
                 log.write(f"❌ Todos los modelos fallaron\n")
             return ""
 
+        except QuotaExceededError:
+            raise
         except Exception as e:
             error_msg = str(e)
             with open(log_file, "a", encoding="utf-8") as log:
@@ -365,6 +408,8 @@ class AIHandler:
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     text = f.read()
 
+        except QuotaExceededError:
+            raise
         except Exception as e:
             logger.error(f"❌ Error real en extract_text ({ext}): {str(e)}")
             text = ""
@@ -409,11 +454,20 @@ class AIHandler:
                     logger.info(f"✅ Resumen generado con {model}")
                     return result
                 except Exception as model_error:
+                    error_msg = str(model_error)
+                    if "429" in error_msg or "ResourceExhausted" in error_msg or "quota" in error_msg.lower():
+                        retry = AIHandler._parse_retry_after(error_msg)
+                        wait_msg = f" (Reintenta en {retry}s)" if retry else ""
+                        logger.error(f"🚨 Cuota agotada en {model} (Resumen): {error_msg}")
+                        raise QuotaExceededError(f"Cuota de IA agotada en Resumen{wait_msg}", retry_after=retry)
+
                     logger.warning(f"⚠️ Modelo {model} falló para resumen: {model_error}")
                     continue
             
             return "Resumen no disponible (error en todos los modelos)."
             
+        except QuotaExceededError:
+            raise
         except Exception as e:
             logger.error(f"❌ Error generando resumen: {e}")
             return "Resumen no disponible."
@@ -538,11 +592,20 @@ class AIHandler:
                     logger.info(f"✅ Intención extraída con LLM: {result_text}")
                     return json.loads(result_text)
                 except Exception as model_error:
+                    error_msg = str(model_error)
+                    if "429" in error_msg or "ResourceExhausted" in error_msg or "quota" in error_msg.lower():
+                        retry = AIHandler._parse_retry_after(error_msg)
+                        wait_msg = f" (Reintenta en {retry}s)" if retry else ""
+                        logger.error(f"🚨 Cuota agotada en {model} (Intento de Búsqueda): {error_msg}")
+                        raise QuotaExceededError(f"Cuota de IA agotada en Análisis de Búsqueda{wait_msg}", retry_after=retry)
+
                     logger.warning(f"⚠️ Modelo {model} falló al extraer intención: {model_error}")
                     continue
                     
             return {"semantic_query": query_text, "file_types": []}
             
+        except QuotaExceededError:
+            raise
         except Exception as e:
             logger.error(f"❌ Error al analizar intención: {e}")
             return {"semantic_query": query_text, "file_types": []}

@@ -12,7 +12,7 @@ from geopy.geocoders import Nominatim
 import geopy.geocoders
 
 from src.init_services import db, dropbox_svc, drive_svc, openai_client
-from src.utils.ai_handler import AIHandler
+from src.utils.ai_handler import AIHandler, QuotaExceededError
 
 # Configuración SSL para mi MacBook
 ctx = ssl.create_default_context(cafile=certifi.where())
@@ -206,6 +206,9 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 if texto_extraido and texto_extraido.strip():
                     vector = await AIHandler.get_embedding(texto_extraido)
+            except QuotaExceededError:
+                print("⚠️ Cuota de IA agotada detectada en bot.")
+                if msg: await msg.edit_text("⏳ *IA temporalmente saturada:* El archivo se subirá pero la búsqueda inteligente tardará un poco más en activarse.", parse_mode=ParseMode.MARKDOWN)
             except Exception as ai_err:
                 print(f"⚠️ Error en IA: {ai_err}")
 
@@ -312,20 +315,28 @@ async def voice_options_callback(update: Update, context: ContextTypes.DEFAULT_T
 
         # 2. Transcribir si es necesario
         if action in ["voice_only_view", "voice_upload_both", "voice_upload_txt"]:
-            await progress_msg.edit_text("🎙️ Transcribiendo audio... por favor espera.")
-            transcripcion = await AIHandler.transcribe_audio(local_audio)
+            try:
+                await progress_msg.edit_text("🎙️ Transcribiendo audio... por favor espera.")
+                transcripcion = await AIHandler.transcribe_audio(local_audio)
 
-        # 3. Si el usuario solo quería ver la transcripción
-        if action == "voice_only_view":
-            if "[Error" in transcripcion:
-                await progress_msg.edit_text(f"❌ *Error en la transcripción:*\n\n{transcripcion}", parse_mode="Markdown")
-            else:
-                await progress_msg.edit_text(f"📝 *Transcripción:* \n\n{transcripcion}", parse_mode="Markdown")
-            
-            # Limpiar
-            user_data.pop('temp_voice', None)
-            if os.path.exists(local_audio): os.remove(local_audio)
-            return
+                # 3. Si el usuario solo quería ver la transcripción
+                if action == "voice_only_view":
+                    if "[Error" in transcripcion:
+                        await progress_msg.edit_text(f"❌ *Error en la transcripción:*\n\n{transcripcion}", parse_mode="Markdown")
+                    else:
+                        await progress_msg.edit_text(f"📝 *Transcripción:* \n\n{transcripcion}", parse_mode="Markdown")
+                    
+                    # Limpiar
+                    user_data.pop('temp_voice', None)
+                    if os.path.exists(local_audio): os.remove(local_audio)
+                    return
+            except QuotaExceededError:
+                await progress_msg.edit_text("⚠️ *Cuota de IA agotada:* Lo siento, Gemini no puede procesar más audios por este minuto. Inténtalo de nuevo en 60 segundos.", parse_mode=ParseMode.MARKDOWN)
+                if os.path.exists(local_audio): os.remove(local_audio)
+                return
+            except Exception as e:
+                await progress_msg.edit_text(f"❌ Error crítico: {str(e)}")
+                return
 
         # 4. Para cualquier acción de subida, agregamos los elementos al menú de subida
         if action in ["voice_upload_audio", "voice_upload_txt", "voice_upload_both"]:
