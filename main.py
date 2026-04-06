@@ -203,7 +203,8 @@ async def list_files_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     text = "📋 *Últimos 20 archivos:*\n\n"
     for i, f in enumerate(files, 1): # El '1' inicia el conteo en 1
-        text += f"{i}. [{f[1]}]({f[2]}) ({f[3].upper()})\n"
+        num_emoji = "".join(f"{d}️⃣" for d in str(i))
+        text += f"{num_emoji} [{f[1]}]({f[2]}) ({f[3].upper()})\n"
     
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
     
@@ -733,16 +734,22 @@ async def send_delete_page(update, context, edit=False):
     start_idx = page * items_per_page
     end_idx = start_idx + items_per_page
     current_items = results[start_idx:end_idx]
+    total_pages = (len(results) + items_per_page - 1) // items_per_page
     
     if not current_items:
         return await update.effective_chat.send_message("❌ No hay más archivos para mostrar.")
 
-    text = f"🗑️ *Panel de Eliminación* (Pág. {page + 1})\n"
-    text += "Haz clic en el nombre para previsualizar.\n"
-    text += "Escribe el **número** para borrar permanentemente:\n\n"
+    text = f"🗑️ *Panel de Eliminación*\n"
+    text += f"📖 Página {page+1} de {total_pages}\n"
+    text += "⎯" * 15 + "\n\n"
     
     for i, item in enumerate(current_items, start_idx + 1):
-        text += f"{i}. [{item[1]}]({item[2]}) | _{item[3].capitalize()}_\n"
+        num_emoji = "".join(f"{d}️⃣" for d in str(i))
+        text += f"{num_emoji} [{item[1]}]({item[2]}) | _{item[3].capitalize()}_\n\n"
+    
+    text += "⎯" * 15 + "\n"
+    text += "⚠️ *ACCIÓN REQUERIDA:*\n"
+    text += "Escribe el **número** del archivo que deseas borrar permanentemente o usa los botones para navegar."
     
     nav_buttons = []
     if page > 0:
@@ -795,8 +802,8 @@ async def send_search_page(update, context, edit=False):
     for idx, item in enumerate(current_items, start_idx + 1):
         score = f" ({int(item['score']*100)}%)" if item.get('score') else ""
         
-        # Lógica para convertir número a emoji y calcular ancho de línea
-        num_emoji = f"{idx}️⃣"
+        # Lógica para convertir cada dígito de número a emoji y calcular ancho de línea
+        num_emoji = "".join(f"{d}️⃣" for d in str(idx))
         
         # Calcular cuántos '=' necesitamos para llenar la línea
         # len(num_emoji) suele ser 3 para <10 (ej 1️⃣) y 4 para >=10 (ej 10️⃣)
@@ -844,7 +851,7 @@ async def send_name_search_page(update, context, edit=False):
 
     text = f"🔎 *Resultados por nombre* (Página {page+1}/{total_pages})\n\n"
     for idx, item in enumerate(current_items, start_idx + 1):
-        num_emoji = f"{idx}️⃣"
+        num_emoji = "".join(f"{d}️⃣" for d in str(idx))
         text += f"{num_emoji} \n"
         text += f"📄 *{item['name']}* — _{item.get('service','').upper()}_\n"
         text += f"📝 {item.get('summary','')}\n"

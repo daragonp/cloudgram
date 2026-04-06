@@ -5,7 +5,21 @@ import numpy as np
 from datetime import datetime
 import os
 import sqlite3 
+import time
 
+class ConnectionWrapper:
+    """Envoltorio para asegurar que la conexión se cierre al salir de un bloque with."""
+    def __init__(self, conn):
+        self.conn = conn
+    def __enter__(self):
+        # El método __enter__ de psycopg2 devuelve la conexión
+        return self.conn.__enter__()
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            # El método __exit__ de psycopg2 maneja el commit/rollback
+            return self.conn.__exit__(exc_type, exc_val, exc_tb)
+        finally:
+            self.conn.close()
 
 class DatabaseHandler:
 
@@ -27,13 +41,22 @@ class DatabaseHandler:
         self._setup_initial_db()
 
     def _connect(self):
-        # Si la URL es de Postgres, usamos psycopg2
+        # Si la URL es de Postgres, usamos psycopg2 con reintentos
         if "postgresql" in self.db_url:
-            try:
-                return psycopg2.connect(self.db_url)
-            except Exception as e:
-                print(f"❌ ERROR DE CONEXIÓN A SUPABASE: {e}")
-                raise e
+            max_attempts = 3
+            last_err = None
+            for attempt in range(max_attempts):
+                try:
+                    conn = psycopg2.connect(self.db_url)
+                    return ConnectionWrapper(conn)
+                except Exception as e:
+                    last_err = e
+                    print(f"⚠️ Intento {attempt + 1}/{max_attempts} de conexión DB fallido: {e}")
+                    if attempt < max_attempts - 1:
+                        time.sleep(2 ** attempt) # Exponential backoff simple
+            
+            print(f"❌ ERROR AGOTADO DE CONEXIÓN A SUPABASE: {last_err}")
+            raise last_err
         else:
             # Si por alguna razón sigue intentando SQLite
             print("⚠️ CUIDADO: Usando SQLite local.")
