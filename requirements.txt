@@ -16,12 +16,10 @@ Flask-SQLAlchemy==3.1.1
 Flask-WTF==1.2.2
 geographiclib==2.1
 geopy==2.4.1
-google-api-core==2.29.0
 google-api-python-client==2.190.0
 google-auth==2.48.0
 google-auth-httplib2==0.3.0
 google-auth-oauthlib==1.2.4
-googleapis-common-protos==1.72.0
 greenlet==3.3.1
 google-generativeai>=0.8.0
 gunicorn==25.1.0
@@ -44,8 +42,6 @@ packaging==26.0
 pandas==3.0.1
 pillow==12.1.1
 ply==3.11
-proto-plus==1.27.1
-protobuf
 psycopg2-binary==2.9.11
 pyasn1==0.6.2
 pyasn1_modules==0.4.2
