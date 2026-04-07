@@ -25,8 +25,8 @@ python3 main.py &
 BOT_PID=$!
 
 echo "🌐 Iniciando Web Admin (Flask)..."
-# Usamos python3 web_admin.py en lugar de Gunicorn para evitar errores de macOS
-python3 web_admin.py &
+# Usamos gunicorn para el entorno productivo
+gunicorn app:app &
 WEB_PID=$!
 
 # Esperamos a que ambos procesos terminen
