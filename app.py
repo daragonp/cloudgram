@@ -27,8 +27,8 @@ def keep_alive():
 
     while True:
         try:
-            requests.get(url, timeout=10)
-            print("✅ Keep-alive: Ping exitoso.")
+            requests.get(f"{url}/health", timeout=10)
+            print("✅ Keep-alive: Ping exitoso a /health.")
         except Exception as e:
             print(f"⚠️ Keep-alive: Error en ping - {e}")
         time.sleep(840) # 14 minutos

@@ -3,7 +3,7 @@ import json
 import asyncio
 import threading
 from datetime import datetime
-from flask import Flask, render_template, redirect, url_for, request, flash, Response, stream_with_context
+from flask import Flask, render_template, redirect, url_for, request, flash, Response, stream_with_context, jsonify
 
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -505,6 +505,25 @@ def perfil():
 
     user_data = db.get_user_by_id(current_user.id)
     return render_template('profile.html', user=user_data)
+
+@app.route('/health')
+def health_check():
+    """Endpoint público para monitoreo de salud del sistema."""
+    try:
+        db_ok = db.check_connection()
+        status = "healthy" if db_ok else "unhealthy"
+        return jsonify({
+            "status": status,
+            "database": "online" if db_ok else "offline",
+            "timestamp": datetime.now().isoformat(),
+            "service": "cloudgram-pro"
+        }), 200 if db_ok else 503
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
 
 @app.route('/status-check')
 @login_required
