@@ -53,6 +53,9 @@ def start_telegram_bot():
     bot_app.add_handler(main.MessageHandler(main.filters.TEXT & (~main.filters.COMMAND), main.handle_text_input))
     bot_app.add_handler(main.CallbackQueryHandler(main.button_callback))
     
+    # Registramos el manejador de errores
+    bot_app.add_error_handler(main.error_handler)
+    
     print("🚀 CloudGram PRO v1.0 ONLINE (Bot + Panel Web)")
     # Esto bloquea el hilo principal manteniendo el proceso vivo para el bot
     bot_app.run_polling()

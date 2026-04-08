@@ -637,9 +637,7 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.edit_text(f"🤖 Entendido. Buscando `{semantic_query}` en archivos tipo: {', '.join(file_types).upper()}...")
 
         query_vector = await AIHandler.get_embedding(semantic_query)
-    except QuotaExceededError as qe:
-        return await msg.edit_text(f"⚠️ *IA temporalmente saturada:*\n{qe}\n\nIntenta una búsqueda por nombre tradicional o espera un minuto.")
-        
+
         if not query_vector:
             return await msg.edit_text("❌ Error generando embedding. Verifica tu API key de Gemini.")
 
@@ -697,6 +695,8 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await send_search_page(update, context)
 
+    except QuotaExceededError as qe:
+        return await msg.edit_text(f"⚠️ *IA temporalmente saturada:*\n{qe}\n\nIntenta una búsqueda por nombre tradicional o espera un minuto.")
     except Exception as e:
         print(f"❌ ERROR EN BUSQUEDA IA: {e}")
         import traceback
@@ -947,6 +947,8 @@ if __name__ == '__main__':
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text_input))
     
     app.add_handler(CallbackQueryHandler(button_callback))
+    
+    app.add_error_handler(error_handler)
     
     print("🚀 CloudGram PRO v1.0 ONLINE")
     app.run_polling()

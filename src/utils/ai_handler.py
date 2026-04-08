@@ -49,7 +49,7 @@ class AIHandler:
     
     # Modelos disponibles en orden de preferencia
     EMBEDDING_MODELS = ["gemini-embedding-001", "gemini-embedding-2-preview"]
-    CHAT_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-flash-lite"]
+    CHAT_MODELS = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
     
     # Cliente asíncrono compartido (Singleton)
     _async_client = None
