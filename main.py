@@ -4,7 +4,7 @@ import json
 import warnings
 import platform
 import sys
-import shutil  # NUEVO: Para detectar ancho de pantalla
+import shutil 
 import numpy as np
 from datetime import datetime
 from dotenv import load_dotenv
