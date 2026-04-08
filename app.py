@@ -8,6 +8,7 @@ import requests
 # 1. IMPORTAR EL PANEL WEB (FLASK)
 # ==========================================
 from web_admin import app as flask_app
+app = flask_app # Alias para que Gunicorn encuentre 'app' en 'app.py'
 
 def run_flask():
     # Render inyecta el puerto en la variable de entorno PORT. Es obligatorio usarla.
