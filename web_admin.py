@@ -953,6 +953,9 @@ def db_explorer_table(table_name):
     except Exception as e:
         flash(f"Error al leer la tabla {table_name}: {e}", "danger")
         return redirect(url_for('db_explorer_list'))
+        
+from zoneinfo import ZoneInfo
+from datetime import datetime
 
 @app.route('/logs')
 @login_required
@@ -961,7 +964,32 @@ def logs():
     module = request.args.get('module', '')
     limit = request.args.get('limit', 100)
     
+    # 1. Obtienes los datos tal como están ahora
     logs_data = db.get_logs(limit=limit, level=level, module=module if module else None)
+    
+    # 2. Definimos tu zona horaria (UTC-5). 
+    # Cambia "America/Bogota" por la tuya (Ej: America/Lima, America/Mexico_City, America/Quito)
+    tz_local = ZoneInfo("America/Bogota") 
+    
+    # 3. Recorremos los logs para convertir la hora
+    for log in logs_data:
+        fecha_original = log.get('created_at')
+        if fecha_original:
+            # Supabase suele devolver la fecha como un string de texto
+            if isinstance(fecha_original, str):
+                # Convertimos el string a un objeto datetime (reemplazamos la 'Z' de UTC)
+                fecha_utc = datetime.fromisoformat(fecha_original.replace('Z', '+00:00'))
+            else:
+                fecha_utc = fecha_original
+                
+            # Aseguramos que Python sepa que es UTC y lo convertimos a tu hora local
+            if fecha_utc.tzinfo is None:
+                fecha_utc = fecha_utc.replace(tzinfo=ZoneInfo("UTC"))
+                
+            # Guardamos la nueva hora en una nueva clave del diccionario
+            log['created_at_local'] = fecha_utc.astimezone(tz_local)
+    
+    # 4. Enviamos los datos a la plantilla
     return render_template('logs.html', logs=logs_data, current_level=level, current_module=module, limit=limit)
 
 if __name__ == '__main__':
