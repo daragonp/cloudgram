@@ -18,6 +18,46 @@ def run_flask():
     flask_app.run(host='0.0.0.0', port=port, threaded=True, use_reloader=False)
 
 # ==========================================
+# 3. INICIALIZACIÓN DEL BOT DE TELEGRAM
+# ==========================================
+def start_telegram_bot():
+    # Al importar 'main' como módulo, NO se ejecuta el bloque if __name__ de main.py
+    import main 
+    
+    # Ejecutamos la bienvenida que creaste
+    main.print_server_welcome()
+    
+    # Construimos el bot (copiado de la configuración de tu main.py)
+    bot_app = main.ApplicationBuilder().token(os.getenv("TELEGRAM_BOT_TOKEN")).post_init(main.post_init).post_stop(main.post_stop).build()
+    
+    # Registramos todos tus handlers exactamente como los tienes en main.py
+    bot_app.add_handler(main.TypeHandler(main.Update, main.auth_middleware), group=-1)
+    bot_app.add_handler(main.CommandHandler("start", main.start))
+    bot_app.add_handler(main.CommandHandler("stats", main.stats_command))
+    bot_app.add_handler(main.CommandHandler("listar", main.list_files_command))
+    bot_app.add_handler(main.CommandHandler("buscar", main.search_command))
+    bot_app.add_handler(main.CommandHandler("buscar_ia", main.search_ia_command))
+    bot_app.add_handler(main.CommandHandler("eliminar", main.delete_command))
+    bot_app.add_handler(main.CommandHandler("ayuda", main.help_command))
+    bot_app.add_handler(main.CommandHandler("help", main.help_command))
+    bot_app.add_handler(main.CallbackQueryHandler(main.voice_options_callback, pattern="^voice_"))
+    bot_app.add_handler(main.CommandHandler(["cancelar", "salir", "stop"], main.cancelar_handler))
+    bot_app.add_handler(main.MessageHandler(main.filters.COMMAND, main.unknown_command_handler))
+            
+    bot_app.add_handler(main.MessageHandler(
+        (main.filters.Document.ALL | main.filters.PHOTO | main.filters.VIDEO | 
+         main.filters.VIDEO_NOTE | main.filters.AUDIO | main.filters.VOICE | main.filters.LOCATION), 
+        main.handle_any_file
+    ))
+    
+    bot_app.add_handler(main.MessageHandler(main.filters.TEXT & (~main.filters.COMMAND), main.handle_text_input))
+    bot_app.add_handler(main.CallbackQueryHandler(main.button_callback))
+    
+    print("🚀 CloudGram PRO v1.0 ONLINE (Bot + Panel Web)")
+    # Esto bloquea el hilo principal manteniendo el proceso vivo para el bot
+    bot_app.run_polling()
+
+# ==========================================
 # 4. INICIO DEL SISTEMA
 # ==========================================
 if __name__ == '__main__':
