@@ -2,19 +2,13 @@ version: "1"
 
 services:
   - type: web
-    name: cloudgram-dashboard
+    name: cloudgram-monolith
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn web_admin:app
+    startCommand: python3 app.py
     envVars:
       - key: PORT
         value: 10000
-      # Recuerda agregar DATABASE_URL manualmente en el panel de Render hacia tu Supabase
-
-  - type: worker
-    name: cloudgram-bot
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python3 main.py
-    envVars: []
-      # Recuerda agregar DATABASE_URL manualmente en el panel de Render hacia tu Supabase
+      - key: START_KEEP_ALIVE
+        value: "true"
+      # Recuerda agregar DATABASE_URL, TELEGRAM_BOT_TOKEN, etc. manualmente en Render
