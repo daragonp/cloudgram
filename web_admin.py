@@ -3,6 +3,8 @@ import json
 import asyncio
 import threading
 from datetime import datetime
+import time
+import requests
 from flask import Flask, render_template, redirect, url_for, request, flash, Response, stream_with_context, jsonify
 
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
@@ -28,6 +30,27 @@ csrf = CSRFProtect(app)
 
 # Estado global para control de procesos (Cancellation tokens)
 app.stop_embeddings = False
+
+# --- SISTEMA ANTI-DORMICIÓN (KEEP-ALIVE) ---
+def run_keep_alive():
+    url = os.environ.get('RENDER_EXTERNAL_URL')
+    if not url:
+        print("⚠️ [KEEP-ALIVE] RENDER_EXTERNAL_URL no configurada. Saltando.")
+        return
+
+    print(f"✅ [KEEP-ALIVE] Iniciando ping automático a: {url}/health")
+    while True:
+        try:
+            # Ping cada 14 min para evitar sleep en Render
+            resp = requests.get(f"{url}/health", timeout=15)
+            print(f"✅ [KEEP-ALIVE] Ping exitoso: {resp.status_code}")
+        except Exception as e:
+            print(f"⚠️ [KEEP-ALIVE] Error en ping: {e}")
+        time.sleep(840) # 14 minutos
+
+# Lanzar el hilo de keep-alive solo si estamos en Render
+if os.environ.get('RENDER_EXTERNAL_URL'):
+    threading.Thread(target=run_keep_alive, daemon=True).start()
 
 # Almacén temporal de flujos de autenticación (En memoria)
 # En una app multi-usuario real usaríamos una base de datos o Redis
