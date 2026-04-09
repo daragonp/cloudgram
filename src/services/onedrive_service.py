@@ -106,10 +106,12 @@ class OneDriveService(CloudService):
             if response.status_code in [201, 200]:
                 return response.json().get('id')
             elif response.status_code == 409: # Conflict
-                # Re-buscar el ID si falló el check anterior
+                print(f"ℹ️ OneDrive: Carpeta '{folder_name}' ya existe (409). Buscando ID...")
                 check_resp = requests.get(endpoint, headers=headers)
                 existing = [i for i in check_resp.json().get('value', []) if i['name'] == folder_name]
                 return existing[0]['id'] if existing else None
+            else:
+                print(f"❌ OneDrive create_folder failed Status: {response.status_code} Resp: {response.text}")
             return None
         except Exception as e:
             print(f"❌ Error OneDrive mkdir: {e}")
@@ -135,6 +137,8 @@ class OneDriveService(CloudService):
                 if response.status_code in [200, 201]:
                     item_id = response.json().get('id')
                     return await self.get_link(item_id)
+                else:
+                    print(f"❌ OneDrive upload failed Status: {response.status_code} Resp: {response.text}")
             return None
         except Exception as e:
             print(f"❌ Error subida simple OneDrive: {e}")
@@ -184,6 +188,8 @@ class OneDriveService(CloudService):
             response = requests.post(endpoint, headers=headers, json=body)
             if response.status_code in [200, 201]:
                 return response.json().get('link', {}).get('webUrl')
+            else:
+                print(f"❌ OneDrive get_link failed Status: {response.status_code} Resp: {response.text}")
             return None
         except Exception as e:
             print(f"❌ Error obteniendo link OneDrive: {e}")

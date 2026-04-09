@@ -494,7 +494,12 @@ async def upload_process(update, context, target_files_info: list, predefined_em
                         folder_id = await onedrive_svc.create_folder(category, parent_id=None)
                         if folder_id:
                             CATEGORY_FOLDER_CACHE['onedrive'][category] = folder_id
-                    url = await onedrive_svc.upload(local_path, file_name, folder_id=folder_id) if folder_id else None
+                        else:
+                            print(f"⚠️ OneDrive: No se pudo obtener folder_id para '{category}', se subirá a raíz.")
+                    
+                    url = await onedrive_svc.upload(local_path, file_name, folder_id=folder_id)
+                    if not url:
+                        print(f"❌ OneDrive: La subida de '{file_name}' no devolvió URL.")
                 
                 if url:
                     cloud_links.append(f"[✅ {cloud.capitalize()}]({url})")
