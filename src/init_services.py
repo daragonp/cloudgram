@@ -166,7 +166,7 @@ def print_status():
     }
     
     for service, is_ok in status.items():
-        print(f"  {icons[is_ok]} {service.replace('_', ' ').title()}")
+        logger.info(f"  {icons[is_ok]} {service.replace('_', ' ').title()}")
     
     print("="*50 + "\n")
     

@@ -2,7 +2,10 @@ import os
 import msal
 import requests
 import json
+import logging
 from .base_service import CloudService
+
+logger = logging.getLogger(__name__)
 
 class OneDriveService(CloudService):
     def __init__(self, client_id, client_secret, refresh_token):
@@ -15,7 +18,7 @@ class OneDriveService(CloudService):
         
         if not all([client_id, client_secret, refresh_token]):
             self.app = None
-            print("⚠️ OneDriveService: Faltan credenciales (CLIENT_ID, SECRET o REFRESH_TOKEN)")
+            logger.warning("⚠️ OneDriveService: Faltan credenciales (CLIENT_ID, SECRET o REFRESH_TOKEN)")
             return
 
         try:
@@ -27,12 +30,12 @@ class OneDriveService(CloudService):
             # Validar que podemos obtener un token inicial
             token = self._get_access_token()
             if token:
-                print("✅ OneDriveService: Conexión verificada con éxito.")
+                logger.info("✅ OneDriveService: Conexión verificada con éxito.")
             else:
-                print("❌ OneDriveService: No se pudo obtener el token de acceso.")
+                logger.error("❌ OneDriveService: No se pudo obtener el token de acceso.")
                 self.app = None
         except Exception as e:
-            print(f"❌ Error de inicialización en OneDrive: {e}")
+            logger.error(f"❌ Error de inicialización en OneDrive: {e}")
             self.app = None
 
     def _get_access_token(self):
@@ -46,10 +49,10 @@ class OneDriveService(CloudService):
             if "access_token" in result:
                 return result["access_token"]
             else:
-                print(f"❌ Error MSAL: {result.get('error_description', result.get('error'))}")
+                logger.error(f"❌ Error MSAL: {result.get('error_description', result.get('error'))}")
                 return None
         except Exception as e:
-            print(f"❌ Error recuperando token OneDrive: {e}")
+            logger.error(f"❌ Error recuperando token OneDrive: {e}")
             return None
 
     def _get_headers(self):
@@ -106,15 +109,15 @@ class OneDriveService(CloudService):
             if response.status_code in [201, 200]:
                 return response.json().get('id')
             elif response.status_code == 409: # Conflict
-                print(f"ℹ️ OneDrive: Carpeta '{folder_name}' ya existe (409). Buscando ID...")
+                logger.info(f"ℹ️ OneDrive: Carpeta '{folder_name}' ya existe (409). Buscando ID...")
                 check_resp = requests.get(endpoint, headers=headers)
                 existing = [i for i in check_resp.json().get('value', []) if i['name'] == folder_name]
                 return existing[0]['id'] if existing else None
             else:
-                print(f"❌ OneDrive create_folder failed Status: {response.status_code} Resp: {response.text}")
+                logger.error(f"❌ OneDrive create_folder failed Status: {response.status_code} Resp: {response.text}")
             return None
         except Exception as e:
-            print(f"❌ Error OneDrive mkdir: {e}")
+            logger.error(f"❌ Error OneDrive mkdir: {e}")
             return None
 
     async def upload(self, local_path, file_name, folder_id=None):
@@ -138,10 +141,10 @@ class OneDriveService(CloudService):
                     item_id = response.json().get('id')
                     return await self.get_link(item_id)
                 else:
-                    print(f"❌ OneDrive upload failed Status: {response.status_code} Resp: {response.text}")
+                    logger.error(f"❌ OneDrive upload failed Status: {response.status_code} Resp: {response.text}")
             return None
         except Exception as e:
-            print(f"❌ Error subida simple OneDrive: {e}")
+            logger.error(f"❌ Error subida simple OneDrive: {e}")
             return None
 
     async def _upload_large_file(self, local_path, file_name, folder_id=None):

@@ -119,25 +119,25 @@ async def ensure_category_folders():
         try:
             # Listar carpetas raíz en OneDrive
             results = await onedrive_svc.list_files("root")
-            print(f"   [ONEDRIVE] Carpetas/archivos existentes: {results}")
+            logger.info(f"   [ONEDRIVE] Carpetas/archivos existentes: {results}")
         except Exception as e:
-            print(f"   [⚠️  ONEDRIVE] Error listando: {e}")
+            logger.error(f"   [⚠️  ONEDRIVE] Error listando: {e}")
             results = []
         
         for category_name in categories:
             # Buscamos si ya tenemos el ID en caché
             existing_id = CATEGORY_FOLDER_CACHE['onedrive'].get(category_name)
             if existing_id:
-                print(f"   [✅ ONEDRIVE] {category_name} -> {existing_id} (EN CACHÉ)")
+                logger.info(f"   [✅ ONEDRIVE] {category_name} -> {existing_id} (EN CACHÉ)")
             else:
                 try:
                     result = await onedrive_svc.create_folder(category_name, parent_id=None)
                     if result:
                         CATEGORY_FOLDER_CACHE['onedrive'][category_name] = result
                         db.save_category_folder(category_name, 'onedrive', result)
-                        print(f"   [✅ ONEDRIVE] {category_name} -> {result} (CREADA/RECUPERADA)")
+                        logger.info(f"   [✅ ONEDRIVE] {category_name} -> {result} (CREADA/RECUPERADA)")
                 except Exception as e:
-                    print(f"   [⚠️  ONEDRIVE] {category_name}: {e}")
+                    logger.error(f"   [⚠️  ONEDRIVE] {category_name}: {e}")
 
 
 def print_server_welcome():
@@ -495,11 +495,12 @@ async def upload_process(update, context, target_files_info: list, predefined_em
                         if folder_id:
                             CATEGORY_FOLDER_CACHE['onedrive'][category] = folder_id
                         else:
-                            print(f"⚠️ OneDrive: No se pudo obtener folder_id para '{category}', se subirá a raíz.")
+                            logger.warning(f"⚠️ OneDrive: No se pudo obtener folder_id para '{category}', se subirá a raíz.")
                     
+                    logger.info(f"🚀 OneDrive: Iniciando subida de '{file_name}'...")
                     url = await onedrive_svc.upload(local_path, file_name, folder_id=folder_id)
                     if not url:
-                        print(f"❌ OneDrive: La subida de '{file_name}' no devolvió URL.")
+                        logger.error(f"❌ OneDrive: La subida de '{file_name}' no devolvió URL.")
                 
                 if url:
                     cloud_links.append(f"[✅ {cloud.capitalize()}]({url})")
