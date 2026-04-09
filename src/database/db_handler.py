@@ -230,14 +230,14 @@ class DatabaseHandler:
 
     def load_category_cache(self):
         """Carga el caché completo de carpetas desde la BD."""
-        cache = {'dropbox': {}, 'drive': {}}
+        cache = {'dropbox': {}, 'drive': {}, 'onedrive': {}}
         try:
             with self._connect() as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
                     cur.execute("SELECT category_name, service, cloud_id FROM category_folder_cache")
                     for row in cur.fetchall():
                         service = row['service'].lower()
-                        if service in ['dropbox', 'drive']:
+                        if service in ['dropbox', 'drive', 'onedrive']:
                             cache[service][row['category_name']] = row['cloud_id']
         except Exception as e:
             print(f"⚠️  Error cargando caché de carpetas: {e}")

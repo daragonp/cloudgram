@@ -28,7 +28,7 @@ from telegram.constants import ParseMode
 from telegram.error import NetworkError
 
 # 2. IMPORTACIÓN DE SERVICIOS INICIALIZADOS
-from src.init_services import db, dropbox_svc, drive_svc, openai_client 
+from src.init_services import db, dropbox_svc, drive_svc, onedrive_svc, openai_client 
 
 # 3. IMPORTACIÓN DE HANDLERS
 from src.handlers.message_handlers import start, handle_any_file, show_cloud_menu, get_file_category, FILE_CATEGORIES
@@ -40,7 +40,8 @@ from src.utils.ai_handler import AIHandler, QuotaExceededError
 # ================================================================================================
 CATEGORY_FOLDER_CACHE = {
     'dropbox': {},   # category_name -> path (ej. '/Documentos')
-    'drive': {}      # category_name -> folder_id
+    'drive': {},     # category_name -> folder_id
+    'onedrive': {}   # category_name -> folder_id (OneDrive)
 }
 
 # ================================================================================================
@@ -57,7 +58,7 @@ async def ensure_category_folders():
     
     # Cargar caché desde BD
     CATEGORY_FOLDER_CACHE = db.load_category_cache()
-    print(f"   [BDD] Caché cargada: {len(CATEGORY_FOLDER_CACHE['dropbox'])} Dropbox, {len(CATEGORY_FOLDER_CACHE['drive'])} Drive")
+    print(f"   [BDD] Caché cargada: {len(CATEGORY_FOLDER_CACHE['dropbox'])} Dropbox, {len(CATEGORY_FOLDER_CACHE['drive'])} Drive, {len(CATEGORY_FOLDER_CACHE['onedrive'])} OneDrive")
     
     categories = list(FILE_CATEGORIES.keys()) + ["Otros"]
     
@@ -112,6 +113,31 @@ async def ensure_category_folders():
                         print(f"   [✅ GOOGLE DRIVE] {category_name} -> {result} (CREADA)")
                 except Exception as e:
                     print(f"   [⚠️  GOOGLE DRIVE] {category_name}: {e}")
+
+    # ========== ONEDRIVE ==========
+    if onedrive_svc and onedrive_svc.app:
+        try:
+            # Listar carpetas raíz en OneDrive
+            results = await onedrive_svc.list_files("root")
+            print(f"   [ONEDRIVE] Carpetas/archivos existentes: {results}")
+        except Exception as e:
+            print(f"   [⚠️  ONEDRIVE] Error listando: {e}")
+            results = []
+        
+        for category_name in categories:
+            # Buscamos si ya tenemos el ID en caché
+            existing_id = CATEGORY_FOLDER_CACHE['onedrive'].get(category_name)
+            if existing_id:
+                print(f"   [✅ ONEDRIVE] {category_name} -> {existing_id} (EN CACHÉ)")
+            else:
+                try:
+                    result = await onedrive_svc.create_folder(category_name, parent_id=None)
+                    if result:
+                        CATEGORY_FOLDER_CACHE['onedrive'][category_name] = result
+                        db.save_category_folder(category_name, 'onedrive', result)
+                        print(f"   [✅ ONEDRIVE] {category_name} -> {result} (CREADA/RECUPERADA)")
+                except Exception as e:
+                    print(f"   [⚠️  ONEDRIVE] {category_name}: {e}")
 
 
 def print_server_welcome():
@@ -455,13 +481,20 @@ async def upload_process(update, context, target_files_info: list, predefined_em
                 if cloud == 'dropbox':
                     folder_arg = CATEGORY_FOLDER_CACHE['dropbox'].get(category, category)
                     url = await dropbox_svc.upload(local_path, file_name, folder=folder_arg)
-                else:  # drive
+                elif cloud == 'drive':
                     folder_id = CATEGORY_FOLDER_CACHE['drive'].get(category)
                     if not folder_id:
                         folder_id = await drive_svc.create_folder(category, parent_id=None)
                         if folder_id:
                             CATEGORY_FOLDER_CACHE['drive'][category] = folder_id
                     url = await drive_svc.upload(local_path, file_name, folder_id=folder_id) if folder_id else None
+                elif cloud == 'onedrive':
+                    folder_id = CATEGORY_FOLDER_CACHE['onedrive'].get(category)
+                    if not folder_id:
+                        folder_id = await onedrive_svc.create_folder(category, parent_id=None)
+                        if folder_id:
+                            CATEGORY_FOLDER_CACHE['onedrive'][category] = folder_id
+                    url = await onedrive_svc.upload(local_path, file_name, folder_id=folder_id) if folder_id else None
                 
                 if url:
                     cloud_links.append(f"[✅ {cloud.capitalize()}]({url})")
@@ -624,7 +657,7 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("🔎 *Uso:* `/buscar_ia concepto`", parse_mode=ParseMode.MARKDOWN)
     
     query_text = " ".join(context.args)
-    msg = await update.message.reply_text("🤖 Consultando mi base neuronal con Gemini...")
+    msg = await update.message.reply_text("🤖 Consultando mi base neuronal con OpenAI...")
     
     try:
         # 1. Extraer intención de búsqueda (Texto semántico vs Tipo de archivo)

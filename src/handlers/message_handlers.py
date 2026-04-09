@@ -269,10 +269,12 @@ async def show_cloud_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ed
     
     dbx_check = "✅" if "dropbox" in selected else "📦"
     drive_check = "✅" if "drive" in selected else "📁"
+    one_check = "✅" if "onedrive" in selected else "☁️"
 
     keyboard = [
         [InlineKeyboardButton(f"{dbx_check} Dropbox", callback_data='toggle_dropbox')],
         [InlineKeyboardButton(f"{drive_check} Google Drive", callback_data='toggle_drive')],
+        [InlineKeyboardButton(f"{one_check} OneDrive", callback_data='toggle_onedrive')],
         [InlineKeyboardButton("🚀 CONFIRMAR SUBIDA", callback_data='confirm_upload')]
     ]
     

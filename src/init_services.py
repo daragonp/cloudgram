@@ -11,6 +11,7 @@ from openai import OpenAI
 from src.database.db_handler import DatabaseHandler
 from src.services.dropbox_service import DropboxService
 from src.services.google_drive_service import GoogleDriveService
+from src.services.onedrive_service import OneDriveService
 
 load_dotenv()
 
@@ -47,6 +48,17 @@ if drive_svc.service:
 else:
     logger.warning("⚠️ GoogleDriveService no disponible")
 
+# OneDrive Service
+onedrive_svc = OneDriveService(
+    client_id=os.getenv("ONEDRIVE_CLIENT_ID"),
+    client_secret=os.getenv("ONEDRIVE_CLIENT_SECRET"),
+    refresh_token=os.getenv("ONEDRIVE_REFRESH_TOKEN")
+)
+if onedrive_svc.app:
+    logger.info("✅ OneDriveService conectado")
+else:
+    logger.warning("⚠️ OneDriveService no disponible (credenciales faltantes)")
+
 # ============================================================================
 # CLIENTE DE IA - IMPORTANTE
 # ============================================================================
@@ -81,6 +93,7 @@ def test_all_connections():
         "database": False,
         "dropbox": False,
         "google_drive": False,
+        "onedrive": False,
         "gemini_chat": False,
         "gemini_embedding": False
     }
@@ -106,6 +119,15 @@ def test_all_connections():
             results["google_drive"] = True
     except Exception as e:
         logger.error(f"Error Drive: {e}")
+    
+    # Test OneDrive
+    try:
+        if onedrive_svc.app:
+            token = onedrive_svc._get_access_token()
+            if token:
+                results["onedrive"] = True
+    except Exception as e:
+        logger.error(f"Error OneDrive: {e}")
     
     # Test Gemini Chat (via OpenAI-compatible)
     try:
