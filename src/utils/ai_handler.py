@@ -21,13 +21,14 @@ load_dotenv()
 # Configuración de Gemini via interfaz compatible OpenAI
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Configuración de logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class QuotaExceededError(Exception):
-    """Excepción para cuando se agota la cuota (429) de la API de Gemini."""
+    """Excepción para cuando se agota la cuota (429) de la API de Gemini u OpenAI."""
     def __init__(self, message, retry_after=None):
         super().__init__(message)
         self.retry_after = retry_after
@@ -35,7 +36,7 @@ class QuotaExceededError(Exception):
 class AIHandler:
     @staticmethod
     def _parse_retry_after(error_msg):
-        """Intenta extraer el tiempo de espera del mensaje de error de Google."""
+        """Intenta extraer el tiempo de espera del mensaje de error."""
         # Buscar "Please retry in 58.99s" o "retryDelay: 58s"
         match = re.search(r"retry in ([\d\.]+)s", error_msg)
         if match: return match.group(1)
@@ -43,45 +44,54 @@ class AIHandler:
         if match: return match.group(1)
         return None
     """
-    Manejador de IA con soporte para Gemini API.
-    Incluye fallback automático entre modelos y manejo robusto de errores.
+    Manejador de IA Híbrido:
+    - Gemini (Google): Embeddings (compatibilidad DB), Visión, Audio, Resúmenes.
+    - OpenAI: Análisis de intención de búsqueda /buscar_ia (mayor precisión).
     """
     
-    # Modelos disponibles en orden de preferencia
+    # Modelos
     EMBEDDING_MODELS = ["gemini-embedding-001", "gemini-embedding-2-preview"]
-    CHAT_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"]
+    GEMINI_CHAT_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash"]
+    OPENAI_CHAT_MODEL = "gpt-4o"
     
-    # Cliente asíncrono compartido (Singleton)
-    _async_client = None
+    # Clientes asíncronos compartidos (Singletons)
+    _async_client_gemini = None
+    _async_client_openai = None
     
-    @staticmethod
-    def _get_client():
-        """Retorna cliente síncrono para chat/vision"""
-        return OpenAI(
-            api_key=GEMINI_API_KEY,
-            base_url=GEMINI_BASE_URL
-        )
-
     @staticmethod
     def _get_async_client():
-        """Retorna cliente asíncrono singleton para operaciones no bloqueantes"""
-        if AIHandler._async_client is None:
-            AIHandler._async_client = AsyncOpenAI(
+        """Retorna cliente asíncrono para Gemini (OpenAI-compatible)"""
+        if AIHandler._async_client_gemini is None:
+            AIHandler._async_client_gemini = AsyncOpenAI(
                 api_key=GEMINI_API_KEY,
                 base_url=GEMINI_BASE_URL
             )
-        return AIHandler._async_client
+        return AIHandler._async_client_gemini
+
+    @staticmethod
+    def _get_openai_client():
+        """Retorna cliente asíncrono real de OpenAI"""
+        if AIHandler._async_client_openai is None:
+            AIHandler._async_client_openai = AsyncOpenAI(
+                api_key=OPENAI_API_KEY
+            )
+        return AIHandler._async_client_openai
 
     @staticmethod
     async def close_async_client():
-        """Cierra el cliente asíncrono si existe para liberar recursos"""
-        if AIHandler._async_client:
+        """Cierra los clientes asíncronos si existen"""
+        if AIHandler._async_client_gemini:
             try:
-                await AIHandler._async_client.close()
-                AIHandler._async_client = None
-                logger.info("🔌 Cliente asíncrono de IA cerrado correctamente.")
-            except Exception as e:
-                logger.warning(f"⚠️ Error cerrando cliente IA: {e}")
+                await AIHandler._async_client_gemini.close()
+                AIHandler._async_client_gemini = None
+            except: pass
+        
+        if AIHandler._async_client_openai:
+            try:
+                await AIHandler._async_client_openai.close()
+                AIHandler._async_client_openai = None
+            except: pass
+        logger.info("🔌 Clientes asíncronos de IA cerrados.")
 
     @staticmethod
     async def get_embedding(text):
@@ -193,7 +203,7 @@ class AIHandler:
                 base64_image = base64.b64encode(image_file.read()).decode('utf-8')
 
             # Intentar con diferentes modelos de chat (await porque es async)
-            for model in AIHandler.CHAT_MODELS:
+            for model in AIHandler.GEMINI_CHAT_MODELS:
                 try:
                     response = await client.chat.completions.create(
                         model=model,
@@ -295,8 +305,8 @@ class AIHandler:
             with open(file_path, "rb") as f:
                 audio_data = f.read()
             
-            # Intentar con diferentes modelos
-            for model_name in AIHandler.CHAT_MODELS:
+            # Intentar con diferentes modelos (Gemini nativo para audio)
+            for model_name in AIHandler.GEMINI_CHAT_MODELS:
                 try:
                     model = genai.GenerativeModel(
                         model_name=model_name,
@@ -449,8 +459,8 @@ class AIHandler:
         try:
             client = AIHandler._get_async_client()
             
-            # Intentar con diferentes modelos
-            for model in AIHandler.CHAT_MODELS:
+            # Intentar con diferentes modelos de chat
+            for model in AIHandler.GEMINI_CHAT_MODELS:
                 try:
                     response = await client.chat.completions.create(
                         model=model,
@@ -509,8 +519,8 @@ class AIHandler:
             import google.generativeai as genai
             genai.configure(api_key=GEMINI_API_KEY)
             
-            # 1. Test Chat Models
-            for model in AIHandler.CHAT_MODELS:
+            # 1. Test Chat Models (Gemini)
+            for model in AIHandler.GEMINI_CHAT_MODELS:
                 try:
                     test_model = genai.GenerativeModel(model)
                     resp = test_model.generate_content("ping")
@@ -553,14 +563,15 @@ class AIHandler:
     @staticmethod
     async def analyze_search_intent(query_text):
         """
-        Usa LLM para entender la intención de búsqueda del usuario y separar 
-        filtros duros (como tipo de archivo) de la búsqueda semántica.
+        Usa OpenAI para entender la intención de búsqueda del usuario.
+        Se usa OpenAI aquí para una mejor extracción de entidades y tipos.
         
         Returns:
             dict: {"semantic_query": "texto a vectorizar", "file_types": ["pdf", "docx", ...]}
         """
         try:
-            client = AIHandler._get_async_client()
+            client = AIHandler._get_openai_client()
+            model = AIHandler.OPENAI_CHAT_MODEL
             
             system_prompt = """
             Eres un asistente de búsqueda en una base de datos de archivos. 
@@ -592,31 +603,30 @@ class AIHandler:
             Devuelve ÚNICAMENTE el JSON.
             """
             
-            for model in AIHandler.CHAT_MODELS:
-                try:
-                    response = await client.chat.completions.create(
-                        model=model,
-                        response_format={ "type": "json_object" },
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": query_text}
-                        ],
-                        max_tokens=150
-                    )
-                    
-                    result_text = response.choices[0].message.content.strip()
-                    logger.info(f"✅ Intención extraída con LLM: {result_text}")
-                    return json.loads(result_text)
-                except Exception as model_error:
-                    error_msg = str(model_error)
-                    if "429" in error_msg or "ResourceExhausted" in error_msg or "quota" in error_msg.lower():
-                        retry = AIHandler._parse_retry_after(error_msg)
-                        wait_msg = f" (Reintenta en {retry}s)" if retry else ""
-                        logger.error(f"🚨 Cuota agotada en {model} (Intento de Búsqueda): {error_msg}")
-                        raise QuotaExceededError(f"Cuota de IA agotada en Análisis de Búsqueda{wait_msg}", retry_after=retry)
+            try:
+                response = await client.chat.completions.create(
+                    model=model,
+                    response_format={ "type": "json_object" },
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": query_text}
+                    ],
+                    max_tokens=150
+                )
+                
+                result_text = response.choices[0].message.content.strip()
+                logger.info(f"✅ Intención extraída con OpenAI ({model}): {result_text}")
+                return json.loads(result_text)
+            except Exception as model_error:
+                error_msg = str(model_error)
+                if "429" in error_msg or "quota" in error_msg.lower():
+                    retry = AIHandler._parse_retry_after(error_msg)
+                    wait_msg = f" (Reintenta en {retry}s)" if retry else ""
+                    logger.error(f"🚨 Cuota agotada en OpenAI: {error_msg}")
+                    raise QuotaExceededError(f"Cuota de OpenAI agotada{wait_msg}", retry_after=retry)
 
-                    logger.warning(f"⚠️ Modelo {model} falló al extraer intención: {model_error}")
-                    continue
+                logger.warning(f"⚠️ OpenAI ({model}) falló: {model_error}")
+                return {"semantic_query": query_text, "file_types": []}
                     
             return {"semantic_query": query_text, "file_types": []}
             

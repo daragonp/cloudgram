@@ -347,7 +347,10 @@ function startCategorizer() {
     modal.show();
     logConsole.innerHTML = "<span class='text-primary'>> [SISTEMA] Iniciando categorización...</span>\n";
 
-    fetch("/run-categorizer", { method: "POST" })
+    const formData = new FormData();
+    formData.append('csrf_token', document.querySelector('meta[name="csrf-token"]')?.content || '');
+
+    fetch("/run-categorizer", { method: "POST", body: formData })
         .then(res => res.json())
         .then(() => {
             const eventSource = new EventSource("/progress-categorizer");
@@ -387,7 +390,10 @@ function startIndexing() {
     modal.show();
     logConsole.innerHTML = "<span class='text-info'>> [SISTEMA] Iniciando indexación IA...</span>\n";
 
-    fetch("/run-indexer", { method: "POST" })
+    const formData = new FormData();
+    formData.append('csrf_token', document.querySelector('meta[name="csrf-token"]')?.content || '');
+
+    fetch("/run-indexer", { method: "POST", body: formData })
         .then(() => {
             const eventSource = new EventSource("/progress-indexer");
             eventSource.onmessage = function(event) {
