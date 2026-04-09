@@ -184,11 +184,44 @@
                 margin-left: -280px;
                 position: absolute;
                 height: 100vh;
+                box-shadow: none;
             }
             #wrapper.toggled #sidebar-wrapper {
                 margin-left: 0;
-                box-shadow: 4px 0 20px rgba(0,0,0,0.5);
+                box-shadow: 10px 0 30px rgba(0,0,0,0.8);
             }
+            #sidebar-overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100vw;
+                height: 100vh;
+                background: rgba(0,0,0,0.6);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+            #wrapper.toggled #sidebar-overlay {
+                display: block;
+            }
+            .mobile-close-btn {
+                display: block !important;
+            }
+        }
+
+        .mobile-close-btn {
+            display: none;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.5rem;
+            position: absolute;
+            right: 15px;
+            top: 20px;
+            transition: 0.2s;
+        }
+        .mobile-close-btn:hover {
+            color: var(--accent);
         }
 
         /* Flash messages (replacing inline Jinja2 styles) */
@@ -207,9 +240,12 @@
 <body>
 
 {% if current_user.is_authenticated %}
+<div id="sidebar-overlay"></div>
+
 <div id="wrapper">
     <!-- Sidebar -->
     <div id="sidebar-wrapper">
+        <button class="mobile-close-btn" id="sidebar-close"><i class="bi bi-x-lg"></i></button>
         <div class="sidebar-heading fs-4 fw-bold text-center d-flex align-items-center justify-content-center gap-2">
             <img src="{{ url_for('static', filename='logo/logo.png') }}" data-fallback="{{ url_for('static', filename='logo.JPG') }}" onload="" alt="Logo" width="30" class="rounded logo-with-fallback">
             CloudGram
@@ -331,18 +367,36 @@
     // Sidebar Toggle Script
     document.addEventListener("DOMContentLoaded", function() {
         const toggleBtn = document.getElementById("menu-toggle");
+        const sidebarClose = document.getElementById("sidebar-close");
+        const overlay = document.getElementById("sidebar-overlay");
+        const wrapper = document.getElementById("wrapper");
+
+        function toggleMenu() {
+            wrapper.classList.toggle("toggled");
+            const sidebar = document.getElementById("sidebar-wrapper");
+            if (window.innerWidth >= 992 && wrapper.classList.contains("toggled")) {
+                 sidebar.style.marginLeft = '-280px';
+            } else if (window.innerWidth >= 992) {
+                 sidebar.style.marginLeft = '0';
+            }
+        }
+
         if(toggleBtn) {
             toggleBtn.addEventListener("click", function(e) {
                 e.preventDefault();
-                document.getElementById("wrapper").classList.toggle("toggled");
-                const sidebar = document.getElementById("sidebar-wrapper");
-                if (window.innerWidth >= 992) {
-                    if (sidebar.style.marginLeft === '-280px') {
-                        sidebar.style.marginLeft = '0';
-                    } else {
-                        sidebar.style.marginLeft = '-280px';
-                    }
-                }
+                toggleMenu();
+            });
+        }
+
+        if(sidebarClose) {
+            sidebarClose.addEventListener("click", function() {
+                wrapper.classList.remove("toggled");
+            });
+        }
+
+        if(overlay) {
+            overlay.addEventListener("click", function() {
+                wrapper.classList.remove("toggled");
             });
         }
 

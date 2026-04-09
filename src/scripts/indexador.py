@@ -263,6 +263,7 @@ async def procesar_un_archivo_core(fid, name, servicio, cloud_url, content_text,
             emb_str = _json.dumps(vector.tolist() if isinstance(vector, _np.ndarray) else vector)
             with db._connect() as conn:
                 with conn.cursor() as cur:
+                    # 1. Actualizar el archivo original
                     cur.execute("""
                         UPDATE files
                         SET embedding = %s,
@@ -270,8 +271,25 @@ async def procesar_un_archivo_core(fid, name, servicio, cloud_url, content_text,
                             content_text = COALESCE(%s, content_text)
                         WHERE id = %s
                     """, (emb_str, resumen, texto_limpio, fid))
+
+                    # 2. PROPAGACIÓN: Buscar duplicados por nombre en otras nubes que no tengan IA aún
+                    cur.execute("""
+                        UPDATE files
+                        SET embedding = %s,
+                            summary = COALESCE(%s, summary),
+                            content_text = COALESCE(%s, content_text)
+                        WHERE name = %s 
+                        AND id != %s
+                        AND (embedding IS NULL OR embedding IN ('', '[]', 'error_limit'))
+                    """, (emb_str, resumen, texto_limpio, name, fid))
+                    
+                    propagated = cur.rowcount
+                    
                 conn.commit()
+            
             await log(f"   ✅ Embedding guardado ({len(vector)} dims)")
+            if propagated > 0:
+                await log(f"   🔄 Sincronizado automáticamente con {propagated} duplicado(s) en otras nubes.")
             return True
         else:
             await log(f"   ⚠️ No se pudo generar embedding para {name}")
