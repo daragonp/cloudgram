@@ -284,7 +284,7 @@ def delete_file(file_id):
                 success_cloud = loop.run_until_complete(GoogleDriveService.delete_file(name))
             elif service == 'onedrive':
                 if onedrive_svc:
-                    success_cloud = await onedrive_svc.delete_file(name)
+                    success_cloud = loop.run_until_complete(onedrive_svc.delete_file(name))
             loop.close()
         except Exception as e:
             print(f"⚠️ Error Cloud Delete: {e}")
