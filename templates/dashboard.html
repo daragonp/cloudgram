@@ -135,7 +135,7 @@
                 </div>
 
                 <!-- DROPBOX -->
-                <div class="list-group-item bg-transparent d-flex justify-content-between align-items-center border-0 p-4">
+                <div class="list-group-item bg-transparent d-flex justify-content-between align-items-center border-0 p-4 border-bottom" style="border-color: rgba(255,255,255,0.05) !important;">
                     <div class="d-flex align-items-center gap-3">
                         <div class="bg-info bg-opacity-25 p-3 rounded-circle text-info">
                             <i class="bi bi-dropbox fs-4"></i>
@@ -146,6 +146,24 @@
                         </div>
                     </div>
                     {% if dropbox_status %}
+                    <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25 px-3 py-2 rounded-pill"><i class="bi bi-link me-1"></i> CONECTADO</span>
+                    {% else %}
+                    <span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 px-3 py-2 rounded-pill"><i class="bi bi-x-circle me-1"></i> ERROR</span>
+                    {% endif %}
+                </div>
+
+                <!-- ONEDRIVE -->
+                <div class="list-group-item bg-transparent d-flex justify-content-between align-items-center border-0 p-4">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="bg-primary bg-opacity-10 p-3 rounded-circle text-white">
+                            <i class="bi bi-cloud fs-4"></i>
+                        </div>
+                        <div>
+                            <h6 class="mb-1 fw-bold text-white">OneDrive API</h6>
+                            <small class="text-muted">MSAL Refresh Token</small>
+                        </div>
+                    </div>
+                    {% if onedrive_status %}
                     <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25 px-3 py-2 rounded-pill"><i class="bi bi-link me-1"></i> CONECTADO</span>
                     {% else %}
                     <span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25 px-3 py-2 rounded-pill"><i class="bi bi-x-circle me-1"></i> ERROR</span>

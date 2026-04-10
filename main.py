@@ -261,11 +261,20 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Maneja el comando /stats para mostrar métricas directamente en Telegram."""
     try:
+        from src.init_services import onedrive_svc
+        
         with db._connect() as conn:
             with conn.cursor() as cur:
+                # Totales generales
                 cur.execute("SELECT COUNT(*) FROM files")
                 total_db = cur.fetchone()[0]
 
+                # Desglose por nube
+                cur.execute("SELECT service, COUNT(*) FROM files GROUP BY service")
+                rows = cur.fetchall()
+                services_count = {row[0]: row[1] for row in rows}
+
+                # IA
                 cur.execute("SELECT COUNT(*) FROM files WHERE embedding IS NOT NULL AND embedding NOT IN ('', '[]', 'error_limit')")
                 count_ia = cur.fetchone()[0]
 
@@ -277,14 +286,38 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
         db_status = db.check_connection()
         
-        texto = f"📊 *Estadísticas de CloudGram*\n\n"
-        texto += f"📁 *Archivos Totales:* {total_db}\n"
-        texto += f"🧠 *Indexados IA:* {count_ia}\n"
-        texto += f"📸 *Multimedia:* {count_fotos}\n"
-        texto += f"⚠️ *Pendientes/Errores:* {count_pending}\n\n"
-        texto += f"🔌 *Base de datos:* {'ONLINE ✅' if db_status else 'OFFLINE ❌'}\n"
+        # Barra de progreso IA
+        if total_db > 0:
+            porcentaje = (count_ia / total_db) * 100
+            bloques = int(porcentaje / 10)
+            barra = "■" * bloques + "□" * (10 - bloques)
+        else:
+            porcentaje = 0
+            barra = "□" * 10
+
+        texto = f"📊 *ESTADÍSTICAS CLOUDGRAM*\n"
+        texto += f"━━━━━━━━━━━━━━━━━━━━\n\n"
         
-        db.log_event("INFO", "BOT", "Comando /stats consultado desde Telegram.")
+        texto += f"📁 *Archivos Totales:* `{total_db}`\n"
+        texto += f"🧠 *Indexación IA:* `{porcentaje:.1f}%`\n"
+        texto += f"`[{barra}]`\n\n"
+        
+        texto += f"☁️ *Almacenamiento:*\n"
+        texto += f"🔹 Dropbox: `{services_count.get('dropbox', 0)}` \n"
+        texto += f"🔹 G. Drive: `{services_count.get('drive', 0)}` \n"
+        texto += f"🔹 OneDrive: `{services_count.get('onedrive', 0)}` \n\n"
+        
+        texto += f"📸 *Multimedia:* `{count_fotos}`\n"
+        texto += f"⚠️ *Pendientes:* `{count_pending}`\n\n"
+        
+        texto += f"🔌 *Estado de Servicios:*\n"
+        texto += f"🗄️ Base de datos: {'`ONLINE ✅`' if db_status else '`OFFLINE ❌`'}\n"
+        
+        # OneDrive Status check
+        od_status = '`ONLINE ✅`' if (onedrive_svc and onedrive_svc.app and onedrive_svc._get_access_token()) else '`OFFLINE ❌`'
+        texto += f"☁️ OneDrive API: {od_status}\n"
+        
+        db.log_event("INFO", "BOT", "Comando /stats consultado con éxito.")
         await update.message.reply_text(texto, parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
          db.log_event("ERROR", "BOT", f"Error en /stats: {e}")

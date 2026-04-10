@@ -16,6 +16,8 @@ from src.database.db_handler import DatabaseHandler
 from src.scripts.indexador import ejecutar_indexacion_completa, ejecutar_indexacion_paso_a_paso, ejecutar_embeddings_batch_sse
 from src.services.dropbox_service import DropboxService
 from src.services.google_drive_service import GoogleDriveService
+from src.services.onedrive_service import OneDriveService
+from src.init_services import onedrive_svc
 from src.scripts.refresh_drive_token import refresh_google_token
 
 # --- AUTH LIBRARIES ---
@@ -56,7 +58,8 @@ if os.environ.get('RENDER_EXTERNAL_URL'):
 # En una app multi-usuario real usaríamos una base de datos o Redis
 app.auth_flows = {
     'dropbox': {}, # user_id -> flow
-    'google': {}   # user_id -> flow
+    'google': {},  # user_id -> flow
+    'onedrive': {} # user_id -> flow
 }
 
 # --- LOGO / FAVICON HANDLING ------------------------------------------------
@@ -227,6 +230,16 @@ def dashboard():
             drive_status = False
         
         dropbox_status = True  # Status base para Dropbox
+        
+        # OneDrive Status
+        onedrive_status = False
+        if onedrive_svc and onedrive_svc.app:
+            try:
+                # Si podemos obtener un token, está online
+                if onedrive_svc._get_access_token():
+                    onedrive_status = True
+            except:
+                onedrive_status = False
 
         return render_template(
             "dashboard.html",
@@ -236,7 +249,8 @@ def dashboard():
             total_pending=count_pending,
             db_status=db_status,
             drive_status=drive_status,
-            dropbox_status=dropbox_status
+            dropbox_status=dropbox_status,
+            onedrive_status=onedrive_status
         )
 
     except Exception as e:
@@ -268,6 +282,9 @@ def delete_file(file_id):
                 success_cloud = loop.run_until_complete(DropboxService.delete_file(f"/{name}"))
             elif service == 'drive':
                 success_cloud = loop.run_until_complete(GoogleDriveService.delete_file(name))
+            elif service == 'onedrive':
+                if onedrive_svc:
+                    success_cloud = await onedrive_svc.delete_file(name)
             loop.close()
         except Exception as e:
             print(f"⚠️ Error Cloud Delete: {e}")
@@ -780,11 +797,16 @@ def embed_single(file_id):
                                     if "not_found" in str(e).lower():
                                         return {"ok": False, "error": f"Archivo '{name}' no encontrado en Dropbox. Posiblemente fue borrado manualmentne."}
                                     raise e
-                            else:
+                            elif service == 'drive':
                                 drive = GoogleDriveService()
                                 ok = await drive.download_file_by_name(name, local_path)
                                 if not ok:
                                     return {"ok": False, "error": f"Archivo '{name}' no encontrado en Google Drive."}
+                            elif service == 'onedrive':
+                                if onedrive_svc:
+                                    ok = await onedrive_svc.download_file_by_name(name, local_path)
+                                    if not ok:
+                                        return {"ok": False, "error": f"Archivo '{name}' no encontrado en OneDrive."}
                             
                             if ok and os.path.exists(local_path):
                                 texto = await AIHandler.extract_text(local_path)
@@ -991,6 +1013,64 @@ def logs():
     
     # 4. Enviamos los datos a la plantilla
     return render_template('logs.html', logs=logs_data, current_level=level, current_module=module, limit=limit)
+
+@app.route('/auth/onedrive/start', methods=['POST'])
+@login_required
+def auth_onedrive_start():
+    """Inicia el flujo de OAuth para OneDrive."""
+    try:
+        client_id = os.getenv("ONEDRIVE_CLIENT_ID")
+        client_secret = os.getenv("ONEDRIVE_CLIENT_SECRET")
+        tenant_id = os.getenv("ONEDRIVE_TENANT_ID", "common")
+        
+        if not client_id or not client_secret:
+            return {"ok": False, "error": "Faltan ONEDRIVE_CLIENT_ID o CLIENT_SECRET en el .env"}, 400
+            
+        import msal
+        authority = f"https://login.microsoftonline.com/{tenant_id}"
+        scopes = ["Files.ReadWrite.All"]
+        
+        msal_app = msal.ConfidentialClientApplication(
+            client_id, authority=authority, client_credential=client_secret
+        )
+        
+        # Usamos localhost como callback (solo para capturar el código del URL)
+        auth_url = msal_app.get_authorization_request_url(scopes, redirect_uri="http://localhost:5000/callback")
+        
+        app.auth_flows['onedrive'][current_user.id] = msal_app
+        return {"ok": True, "url": auth_url}, 200
+    except Exception as e:
+        return {"ok": False, "error": str(e)}, 500
+
+@app.route('/auth/onedrive/finish', methods=['POST'])
+@login_required
+def auth_onedrive_finish():
+    """Finaliza el flujo de OneDrive con el código."""
+    try:
+        code = request.form.get('code', '').strip()
+        if not code:
+            return {"ok": False, "error": "El código es obligatorio"}, 400
+            
+        msal_app = app.auth_flows['onedrive'].get(current_user.id)
+        if not msal_app:
+            return {"ok": False, "error": "Sesión de autenticación expirada"}, 400
+            
+        scopes = ["Files.ReadWrite.All"]
+        result = msal_app.acquire_token_by_authorization_code(
+            code, scopes=scopes, redirect_uri="http://localhost:5000/callback"
+        )
+        
+        if "refresh_token" in result:
+            app.auth_flows['onedrive'].pop(current_user.id, None)
+            return {
+                "ok": True, 
+                "refresh_token": result["refresh_token"],
+                "message": "¡Token de OneDrive obtenido!"
+            }, 200
+        else:
+            return {"ok": False, "error": result.get("error_description", "Error desconocido en Azure")}, 400
+    except Exception as e:
+        return {"ok": False, "error": str(e)}, 500
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5050))

@@ -106,10 +106,23 @@
 
         /* Topnav */
         .navbar {
-            background-color: rgba(18, 18, 18, 0.8) !important;
+            background-color: rgba(18, 18, 18, 0.95) !important;
             backdrop-filter: blur(10px);
             border-bottom: 1px solid var(--border-color) !important;
             padding: 1rem 2rem !important;
+            z-index: 1050;
+        }
+
+        .dropdown-menu-dark {
+            background-color: #1c1c1c !important;
+            border: 1px solid rgba(255,255,255,0.1) !important;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5) !important;
+            z-index: 2000;
+        }
+
+        .dropdown-item:hover {
+            background-color: rgba(0, 229, 255, 0.1) !important;
+            color: var(--accent) !important;
         }
 
         .btn-toggle-menu {

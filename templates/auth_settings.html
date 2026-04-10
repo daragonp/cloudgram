@@ -127,7 +127,101 @@
     </div>
 </div>
 
+<div class="row g-4 mt-2">
+    <!-- COLUMNA ONEDRIVE -->
+    <div class="col-lg-6">
+        <div class="glass-panel h-100 p-4 d-flex flex-column" style="border-top: 3px solid #0078d4;">
+            <div class="d-flex align-items-center gap-3 mb-4">
+                <div class="bg-primary bg-opacity-10 p-3 rounded-circle text-primary">
+                    <i class="bi bi-cloud-check fs-3"></i>
+                </div>
+                <div>
+                    <h5 class="fw-bold text-white mb-0">OneDrive (Azure AD)</h5>
+                    <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">MSAL OAuth Flow</small>
+                </div>
+            </div>
+
+            <div id="od-step-1" class="auth-step">
+                <p class="text-muted small mb-4">OneDrive utiliza la API de Microsoft Graph. Necesitarás autorizar la aplicación para obtener tu Refresh Token.</p>
+                <button class="btn btn-primary w-100 py-3 fw-bold" style="background-color: #0078d4; border-color: #0078d4;" onclick="startOneDrive()">
+                    <i class="bi bi-microsoft me-2"></i> 1. Generar Código Microsoft
+                </button>
+            </div>
+
+            <div id="od-step-2" class="auth-step d-none">
+                <div class="alert alert-info bg-opacity-10 border-info text-info small mb-4">
+                    <i class="bi bi-info-circle me-2"></i>
+                    Inicia sesión en Microsoft, acepta los permisos y **copia el código que aparece en la URL** (parámetro <code>code=...</code>).
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-muted small">URL de Microsoft:</label>
+                    <div class="input-group">
+                        <input type="text" id="od-url" class="form-control form-control-sm bg-dark border-secondary text-info" readonly>
+                        <a href="#" id="od-link" target="_blank" class="btn btn-outline-info">Abrir <i class="bi bi-box-arrow-up-right ms-1"></i></a>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-muted small">Código de Autorización:</label>
+                    <input type="text" id="od-code" class="form-control border-primary" placeholder="Pega el código aquí...">
+                </div>
+                <button class="btn btn-success w-100 py-2 fw-bold" onclick="finishOneDrive()">
+                    <i class="bi bi-check-lg me-2"></i> Canjear Token
+                </button>
+            </div>
+
+            <div id="od-result" class="auth-step d-none mt-auto pt-4">
+                <label class="form-label text-success fw-bold small"><i class="bi bi-key-fill me-1"></i> NUEVO REFRESH_TOKEN ONEDRIVE:</label>
+                <div class="position-relative">
+                    <textarea id="od-token" class="form-control bg-dark text-white font-monospace mb-3" rows="4" readonly style="font-size: 0.85rem;"></textarea>
+                    <button class="btn btn-sm btn-outline-light position-absolute top-0 end-0 m-2" onclick="copyToClipboard('od-token')">
+                        <i class="bi bi-copy"></i>
+                    </button>
+                </div>
+                <div class="alert alert-warning small mb-0 border-0 bg-warning bg-opacity-10 text-warning">
+                    <i class="bi bi-info-circle-fill me-2"></i>
+                    Copia esto en tu variable <code>ONEDRIVE_REFRESH_TOKEN</code>.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
+async function startOneDrive() {
+    try {
+        const res = await fetch('/auth/onedrive/start', { 
+            method: 'POST',
+            headers: { 'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content }
+        });
+        const data = await res.json();
+        if (data.ok) {
+            document.getElementById('od-url').value = data.url;
+            document.getElementById('od-link').href = data.url;
+            document.getElementById('od-step-1').classList.add('d-none');
+            document.getElementById('od-step-2').classList.remove('d-none');
+        } else { alert("Error OneDrive: " + data.error); }
+    } catch (e) { alert("Error: " + e); }
+}
+
+async function finishOneDrive() {
+    const code = document.getElementById('od-code').value.trim();
+    if (!code) return alert("Pega el código primero");
+    
+    try {
+        const formData = new FormData();
+        formData.append('code', code);
+        formData.append('csrf_token', document.querySelector('meta[name="csrf-token"]').content);
+        
+        const res = await fetch('/auth/onedrive/finish', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.ok) {
+            document.getElementById('od-token').value = data.refresh_token;
+            document.getElementById('od-step-2').classList.add('d-none');
+            document.getElementById('od-result').classList.remove('d-none');
+        } else { alert("Error vinculando OneDrive: " + data.error); }
+    } catch (e) { alert("Error: " + e); }
+}
+
 async function startDropbox() {
     try {
         const res = await fetch('/auth/dropbox/start', { 
