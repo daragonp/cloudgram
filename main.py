@@ -1,6 +1,7 @@
 # main.py
 import os
 import json
+import logging
 import warnings
 import platform
 import sys
@@ -13,6 +14,13 @@ from src.handlers.message_handlers import voice_options_callback
 
 load_dotenv()
 warnings.filterwarnings("ignore", category=FutureWarning)
+
+# Configuración de logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
