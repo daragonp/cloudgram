@@ -396,6 +396,83 @@ class DatabaseHandler:
         except Exception as e:
             print(f"❌ Error al resetear toda la DB: {e}")
 
+    # --- INDEXACIÓN MANUAL ---
+
+    def get_files_without_embedding(self, limit=10, offset=0):
+        """Retorna archivos que no tienen embedding válido, paginados.
+        
+        Incluye archivos donde embedding es NULL, vacío, '[]' o 'error_limit'.
+        Se ordenan por fecha de creación descendente para mostrar los más recientes primero.
+        
+        Returns:
+            list[dict]: Lista de dicts con id, name, service, cloud_url, content_text
+        """
+        try:
+            with self._connect() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("""
+                        SELECT id, name, service, cloud_url, content_text, type
+                        FROM files
+                        WHERE embedding IS NULL
+                           OR embedding IN ('', '[]', 'error_limit')
+                        ORDER BY created_at DESC
+                        LIMIT %s OFFSET %s
+                    """, (limit, offset))
+                    return cur.fetchall()
+        except Exception as e:
+            print(f"❌ Error en get_files_without_embedding: {e}")
+            return []
+
+    def count_files_without_embedding(self):
+        """Retorna el total de archivos sin embedding válido."""
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT COUNT(*) FROM files
+                        WHERE embedding IS NULL
+                           OR embedding IN ('', '[]', 'error_limit')
+                    """)
+                    return cur.fetchone()[0]
+        except Exception as e:
+            print(f"❌ Error en count_files_without_embedding: {e}")
+            return 0
+
+    def update_file_embedding(self, file_id, embedding, summary=None, content_text=None):
+        """Actualiza embedding, summary y content_text de un archivo ya registrado.
+        
+        Se usa después de re-indexar un archivo desde el bot sin necesidad de re-subirlo.
+        Solo actualiza los campos que se pasen como no-None.
+        
+        Args:
+            file_id: ID del archivo en la tabla files
+            embedding: Lista/array con el vector de embedding
+            summary: Resumen del contenido (opcional)
+            content_text: Texto extraído del archivo (opcional)
+        """
+        try:
+            emb_json = json.dumps(
+                embedding.tolist() if isinstance(embedding, np.ndarray) else embedding
+            ) if isinstance(embedding, (list, np.ndarray)) else embedding
+
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE files
+                        SET embedding = %s,
+                            summary = COALESCE(%s, summary),
+                            content_text = COALESCE(%s, content_text)
+                        WHERE id = %s
+                    """, (emb_json, summary, content_text, file_id))
+                conn.commit()
+            print(f"✅ DB: Embedding actualizado para archivo ID={file_id}")
+            return True
+        except Exception as e:
+            print(f"❌ Error en update_file_embedding (id={file_id}): {e}")
+            return False
+
+
+
     def clean_corrupted_files(self):
         """Blanquea solo los archivos cuyo analysis IA falló guardando mensajes de error en base de datos."""
         try:

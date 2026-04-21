@@ -20,8 +20,16 @@ load_dotenv()
 
 # Configuración de Gemini via interfaz compatible OpenAI
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# NOTA: Las claves se leen de forma lazy (en cada llamada) para que un cambio
+# en .env + reinicio del bot sea suficiente para usar la nueva clave.
+def _get_gemini_key():
+    """Retorna la GEMINI_API_KEY actual desde el entorno (lazy read)."""
+    return os.getenv("GEMINI_API_KEY")
+
+def _get_openai_key():
+    """Retorna la OPENAI_API_KEY actual desde el entorno (lazy read)."""
+    return os.getenv("OPENAI_API_KEY")
 
 # Configuración de logging
 logging.basicConfig(level=logging.INFO)
@@ -60,20 +68,23 @@ class AIHandler:
     
     @staticmethod
     def _get_async_client():
-        """Retorna cliente asíncrono para Gemini (OpenAI-compatible)"""
+        """Retorna cliente asíncrono para Gemini (OpenAI-compatible).
+        Se crea con la clave actual del entorno (lazy). Si la clave cambia,
+        invalidar el singleton llamando a close_async_client() antes.
+        """
         if AIHandler._async_client_gemini is None:
             AIHandler._async_client_gemini = AsyncOpenAI(
-                api_key=GEMINI_API_KEY,
+                api_key=_get_gemini_key(),
                 base_url=GEMINI_BASE_URL
             )
         return AIHandler._async_client_gemini
 
     @staticmethod
     def _get_openai_client():
-        """Retorna cliente asíncrono real de OpenAI"""
+        """Retorna cliente asíncrono real de OpenAI (lazy)."""
         if AIHandler._async_client_openai is None:
             AIHandler._async_client_openai = AsyncOpenAI(
-                api_key=OPENAI_API_KEY
+                api_key=_get_openai_key()
             )
         return AIHandler._async_client_openai
 
@@ -117,7 +128,7 @@ class AIHandler:
         
         try:
             import google.generativeai as genai
-            genai.configure(api_key=GEMINI_API_KEY)
+            genai.configure(api_key=_get_gemini_key())
             
             # Limpieza preventiva para evitar errores de codificación
             text = text.replace('\x00', '').strip()
@@ -274,7 +285,7 @@ class AIHandler:
             import google.generativeai as genai
             from google.generativeai.types import HarmCategory, HarmBlockThreshold
             
-            genai.configure(api_key=GEMINI_API_KEY)
+            genai.configure(api_key=_get_gemini_key())
             
             # Configuración de seguridad permisiva para transcripciones
             safety_settings = {
@@ -517,7 +528,7 @@ class AIHandler:
         
         try:
             import google.generativeai as genai
-            genai.configure(api_key=GEMINI_API_KEY)
+            genai.configure(api_key=_get_gemini_key())
             
             # 1. Test Chat Models (Gemini)
             for model in AIHandler.GEMINI_CHAT_MODELS:

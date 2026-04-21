@@ -251,6 +251,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /listar - Mostrar archivos recientes\n"
         "• /buscar <texto> - Buscar por nombre\n"
         "• /buscar_ia <consulta> - Búsqueda semántica (IA)\n"
+        "• /indexar - Generar embeddings pendientes\n"
         "• /eliminar <texto> - Eliminar archivos por nombre\n"
         "• /cancelar - Cancelar acciones en curso\n\n"
         "También puedes enviar archivos (documentos, fotos, audio, voz).\n"
@@ -588,6 +589,9 @@ async def upload_process(update, context, target_files_info: list, predefined_em
             break
 
 
+# Tamaño de página para el comando /indexar
+INDEX_PAGE_SIZE = 10
+
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
@@ -695,8 +699,300 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📁 *Nueva Carpeta*\nEscribe el nombre que deseas ponerle:",
             parse_mode=ParseMode.MARKDOWN
         )
-    
+
+    # =========================================================
+    # CALLBACKS DE INDEXACIÓN (/indexar)
+    # =========================================================
+
+    elif data == 'embed_close':
+        await query.edit_message_text("✅ Panel de indexación cerrado.")
+
+    elif data == 'embed_page_next':
+        context.user_data['index_page'] = context.user_data.get('index_page', 0) + 1
+        return await send_indexar_page(update, context, edit=True)
+
+    elif data == 'embed_page_prev':
+        context.user_data['index_page'] = max(0, context.user_data.get('index_page', 0) - 1)
+        return await send_indexar_page(update, context, edit=True)
+
+    elif data.startswith('embed_file_'):
+        file_id_str = data.replace('embed_file_', '')
+        try:
+            file_id = int(file_id_str)
+        except ValueError:
+            return await query.answer("❌ ID inválido", show_alert=True)
+
+        # Obtener nombre del archivo para el mensaje de progreso
+        archivo = db.get_file_by_id(file_id)
+        nombre = archivo[1] if isinstance(archivo, tuple) else (archivo.get('name', '?') if archivo else '?')
+
+        await query.answer()
+        await query.edit_message_text(
+            f"⏳ *Indexando* `{nombre}`...\nEsto puede tardar unos segundos.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+        try:
+            ok = await _process_single_embed(file_id, update, context)
+            if ok:
+                db.log_event("INFO", "BOT", f"Embedding manual OK: {nombre}")
+                await query.edit_message_text(
+                    rf"✅ *¡Indexado!* `{nombre}` ya es buscable con IA.\n\n"
+                    "Usa /indexar para continuar con los demás o /buscar_ia para buscar.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            else:
+                await query.edit_message_text(
+                    f"⚠️ `{nombre}` no pudo indexarse\n(sin texto extraible o descarga fallida).\n\n"
+                    f"Usa /indexar para ver el resto.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+        except QuotaExceededError as qe:
+            retry_msg = f"\nReintentar en {qe.retry_after}s" if qe.retry_after else ""
+            await query.edit_message_text(
+                f"🚫 *Cuota de Gemini agotada.*{retry_msg}\n\n"
+                f"Espera un momento y vuelve a intentarlo con /indexar.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except Exception as e:
+            logger.error(f"❌ Error indexando ID={file_id}: {e}")
+            await query.edit_message_text(
+                f"❌ Error inesperado indexando `{nombre}`.\nDetalles: {str(e)[:100]}",
+                parse_mode=ParseMode.MARKDOWN
+            )
+
+    elif data == 'embed_all':
+        page = context.user_data.get('index_page', 0)
+        offset = page * INDEX_PAGE_SIZE
+        archivos = db.get_files_without_embedding(limit=INDEX_PAGE_SIZE, offset=offset)
+
+        if not archivos:
+            return await query.edit_message_text("✅ No hay archivos pendientes en esta página.")
+
+        await query.answer()
+        total = len(archivos)
+        ok_count = 0
+        fail_count = 0
+        quota_hit = False
+
+        for idx, archivo in enumerate(archivos, 1):
+            fid = archivo['id'] if isinstance(archivo, dict) else archivo[0]
+            fname = archivo['name'] if isinstance(archivo, dict) else archivo[1]
+
+            try:
+                await query.edit_message_text(
+                    f"🚀 *Indexando en lote...*\n"
+                    f"━" * 18 + "\n"
+                    f"Archivo {idx}/{total}: `{fname}`\n"
+                    f"✅ Éxitos: {ok_count} │ ❌ Fallos: {fail_count}",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception:
+                pass  # Telegram puede rechazar ediciones muy frecuentes
+
+            try:
+                ok = await _process_single_embed(fid, update, context)
+                if ok:
+                    ok_count += 1
+                    db.log_event("INFO", "BOT", f"Embedding batch OK: {fname}")
+                else:
+                    fail_count += 1
+            except QuotaExceededError as qe:
+                quota_hit = True
+                retry_msg = f"\u23f0 Reintentar en {qe.retry_after}s" if qe.retry_after else ""
+                await query.edit_message_text(
+                    f"🚫 *Cuota de Gemini agotada.*\n{retry_msg}\n\n"
+                    f"✅ Indexados: {ok_count}/{total}\n"
+                    f"Usa /indexar cuando puedas para continuar.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                db.log_event("WARNING", "BOT", f"Quota hit durante batch. OK={ok_count}")
+                break
+            except Exception as e:
+                fail_count += 1
+                logger.error(f"❌ Error en batch embed (id={fid}): {e}")
+
+        if not quota_hit:
+            pendientes = db.count_files_without_embedding()
+            await query.edit_message_text(
+                f"✅ *Lote completado*\n"
+                f"━" * 18 + "\n"
+                f"✅ Indexados: {ok_count}\n"
+                f"❌ Sin texto: {fail_count}\n"
+                f"⚠️ Pendientes totales: {pendientes}\n\n"
+                + ("🎉 ¡Todo indexado!" if pendientes == 0 else "Usa /indexar para continuar."),
+                parse_mode=ParseMode.MARKDOWN
+            )
+            db.log_event("INFO", "BOT", f"Batch indexar: OK={ok_count}, fail={fail_count}")
+
 # 5. BÚSQUEDA IA Y ELIMINAR
+
+
+async def indexar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler del comando /indexar: muestra archivos sin embedding para indexar."""
+    context.user_data['index_page'] = 0
+    await send_indexar_page(update, context, edit=False)
+
+async def send_indexar_page(update: ContextTypes.DEFAULT_TYPE, context: ContextTypes.DEFAULT_TYPE, edit: bool = False):
+    """Renderiza la lista paginada de archivos sin embedding."""
+    page = context.user_data.get('index_page', 0)
+    offset = page * INDEX_PAGE_SIZE
+
+    total = db.count_files_without_embedding()
+    archivos = db.get_files_without_embedding(limit=INDEX_PAGE_SIZE, offset=offset)
+    total_pages = max(1, (total + INDEX_PAGE_SIZE - 1) // INDEX_PAGE_SIZE)
+
+    if total == 0:
+        text = (
+            "🧠 *¡Indexación completa!*\n\n"
+            "✅ Todos los archivos ya tienen su embedding generado.\n"
+            "La búsqueda inteligente `/buscar_ia` funcionará al 100%."
+        )
+        if edit and update.callback_query:
+            return await update.callback_query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN)
+        return await update.effective_chat.send_message(text, parse_mode=ParseMode.MARKDOWN)
+
+    # Construir el texto principal
+    text = "🧠 *Indexación de Archivos*\n"
+    text += f"━" * 20 + "\n"
+    text += f"⚠️ *{total}* archivo(s) sin indexar — Pág. {page + 1}/{total_pages}\n"
+    text += f"━" * 20 + "\n\n"
+
+    for i, archivo in enumerate(archivos, start=offset + 1):
+        num_emoji = "".join(f"{d}️⃣" for d in str(i))
+        tiene_texto = bool(archivo.get('content_text') and str(archivo['content_text']).strip())
+        estado = "⚡ (rápido)" if tiene_texto else "📥 (requiere descarga)"
+        text += f"{num_emoji} `{archivo['name']}`\n"
+        text += f"   ☁️ {archivo['service'].upper()} • {estado}\n\n"
+
+    # Teclado: botones individuales + batch + navegación
+    keyboard = []
+
+    # Fila de botones individuales (⋯ Indexar por cada archivo)
+    for archivo in archivos:
+        keyboard.append([
+            InlineKeyboardButton(
+                f"⚡ {archivo['name'][:30]}",
+                callback_data=f"embed_file_{archivo['id']}"
+            )
+        ])
+
+    # Botones de batch + navegación
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ Anterior", callback_data="embed_page_prev"))
+    if (offset + INDEX_PAGE_SIZE) < total:
+        nav_buttons.append(InlineKeyboardButton("Siguiente ➡️", callback_data="embed_page_next"))
+
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+
+    keyboard.append([
+        InlineKeyboardButton(
+            f"🚀 Indexar TODOS estos {len(archivos)}",
+            callback_data="embed_all"
+        )
+    ])
+    keyboard.append([InlineKeyboardButton("❌ Cerrar", callback_data="embed_close")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if edit and update.callback_query:
+        await update.callback_query.edit_message_text(
+            text, reply_markup=reply_markup,
+            parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True
+        )
+    else:
+        await update.effective_chat.send_message(
+            text, reply_markup=reply_markup,
+            parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True
+        )
+
+async def _process_single_embed(file_id: int, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    Genera y guarda el embedding de un archivo identificado por su ID en la DB.
+    
+    Estrategia:
+      1. Si el archivo tiene content_text en la DB → usa ese texto directamente (rápido, sin descarga).
+      2. Si no tiene texto → descarga el archivo desde cloud_url y extrae texto con AIHandler.
+    
+    Returns:
+        True si se guardó correctamente, False en caso de error.
+    Raises:
+        QuotaExceededError: Si la API de Gemini agota su cuota.
+    """
+    import aiohttp
+    import tempfile
+
+    # Obtener info del archivo desde la DB
+    archivo = db.get_file_by_id(file_id)
+    if not archivo:
+        logger.warning(f"⚠️ _process_single_embed: archivo ID={file_id} no encontrado en DB")
+        return False
+
+    name = archivo[1] if isinstance(archivo, tuple) else archivo.get('name', '')
+    service = archivo[2] if isinstance(archivo, tuple) else archivo.get('service', '')
+    cloud_url = archivo[3] if isinstance(archivo, tuple) else archivo.get('cloud_url', '')
+
+    # Intentar obtener content_text desde la DB (evita re-descarga)
+    with db._connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT content_text FROM files WHERE id = %s", (file_id,))
+            row = cur.fetchone()
+            content_text = row[0] if row else None
+
+    texto = content_text if content_text and content_text.strip() else None
+
+    if not texto:
+        # Necesitamos descargar el archivo y extraer texto
+        if not cloud_url:
+            logger.warning(f"⚠️ Sin cloud_url para ID={file_id} ({name})")
+            return False
+        
+        logger.info(f"📥 Descargando '{name}' desde {service} para indexar...")
+        ext = name.rsplit('.', 1)[-1].lower() if '.' in name else 'bin'
+        
+        tmp_path = None
+        try:
+            # Descargar desde la URL de la nube
+            async with aiohttp.ClientSession() as session:
+                async with session.get(cloud_url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                    if resp.status != 200:
+                        logger.error(f"❌ Descarga fallida para '{name}': HTTP {resp.status}")
+                        return False
+                    
+                    with tempfile.NamedTemporaryFile(
+                        suffix=f'.{ext}', delete=False,
+                        dir='descargas', prefix='idx_'
+                    ) as tmp:
+                        tmp_path = tmp.name
+                        async for chunk in resp.content.iter_chunked(8192):
+                            tmp.write(chunk)
+            
+            texto = await AIHandler.extract_text(tmp_path)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    if not texto or not texto.strip():
+        logger.warning(f"⚠️ Sin texto extraible de '{name}'. Skipping embedding.")
+        return False
+
+    # Generar embedding y resumen
+    vector = await AIHandler.get_embedding(texto)  # puede lanzar QuotaExceededError
+    if not vector:
+        logger.error(f"❌ Embedding nulo para '{name}'")
+        return False
+
+    resumen = await AIHandler.generate_summary(texto)
+
+    # Guardar en DB
+    return db.update_file_embedding(
+        file_id=file_id,
+        embedding=vector,
+        summary=resumen,
+        content_text=texto
+    )
 
 async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = context.user_data
@@ -976,6 +1272,7 @@ async def post_init(application):
         BotCommand("start", "🏠 Menú Principal"),
         BotCommand("stats", "📊 Estadísticas"),
         BotCommand("buscar_ia", "🤖 Búsqueda Inteligente"),
+        BotCommand("indexar", "⚡ Indexar archivos pendientes"),
         BotCommand("listar", "📋 Recientes"),
         BotCommand("buscar", "🔎 Buscar por nombre"),
         BotCommand("eliminar", "🗑️ Borrar archivos"),
@@ -1011,6 +1308,7 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("listar", list_files_command))
     app.add_handler(CommandHandler("buscar", search_command))
     app.add_handler(CommandHandler("buscar_ia", search_ia_command))
+    app.add_handler(CommandHandler("indexar", indexar_command))
     app.add_handler(CommandHandler("eliminar", delete_command))
     app.add_handler(CommandHandler("ayuda", help_command))
     app.add_handler(CommandHandler("help", help_command))
