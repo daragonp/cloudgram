@@ -586,6 +586,82 @@ def fix_drive_token():
     return redirect(url_for('dashboard'))
 
 
+@app.route('/update-api-key', methods=['POST'])
+@login_required
+def update_api_key():
+    """
+    Actualiza una clave de API en el .env en disco y recarga las variables de entorno
+    en el proceso actual, sin necesidad de reiniciar el servidor.
+    
+    Claves soportadas: GEMINI_API_KEY, OPENAI_API_KEY.
+    Después de actualizar, invalida el cliente singleton de AIHandler
+    para que la próxima llamada cree uno nuevo con la nueva clave.
+    """
+    key_name = request.form.get('key_name', '').strip()
+    new_value = request.form.get('key_value', '').strip()
+
+    ALLOWED_KEYS = {'GEMINI_API_KEY', 'OPENAI_API_KEY'}
+    if key_name not in ALLOWED_KEYS:
+        return jsonify({"ok": False, "error": f"Clave no permitida: {key_name}"}), 400
+
+    if not new_value:
+        return jsonify({"ok": False, "error": "El valor de la clave no puede estar vacío"}), 400
+
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+
+    try:
+        # 1. Leer el .env actual
+        if os.path.exists(env_path):
+            with open(env_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+        else:
+            lines = []
+
+        # 2. Buscar y reemplazar (o agregar si no existe)
+        key_found = False
+        new_lines = []
+        for line in lines:
+            if line.startswith(f'{key_name}=') or line.startswith(f'{key_name}="'):
+                new_lines.append(f'{key_name}="{new_value}"\n')
+                key_found = True
+            else:
+                new_lines.append(line)
+
+        if not key_found:
+            new_lines.append(f'{key_name}="{new_value}"\n')
+
+        # 3. Escribir el .env actualizado
+        with open(env_path, 'w', encoding='utf-8') as f:
+            f.writelines(new_lines)
+
+        # 4. Actualizar el proceso actual (os.environ) sin reiniciar
+        os.environ[key_name] = new_value
+
+        # 5. Invalidar el singleton de AIHandler para forzar recreación con la nueva clave
+        try:
+            from src.utils.ai_handler import AIHandler
+            # Los singletons se auto-invalidan por clave en el próximo uso,
+            # pero forzamos la limpieza inmediata por si acaso
+            AIHandler._async_client_gemini = None
+            AIHandler._async_client_openai = None
+            AIHandler._gemini_key_used = None
+            AIHandler._openai_key_used = None
+        except Exception as ai_err:
+            print(f"⚠️ No se pudo invalidar cliente AI: {ai_err}")
+
+        db.log_event("INFO", "SISTEMA", f"API Key '{key_name}' actualizada correctamente desde el panel web.")
+        return jsonify({
+            "ok": True,
+            "message": f"✅ {key_name} actualizada. El próximo proceso de IA usará la nueva clave inmediatamente."
+        }), 200
+
+    except Exception as e:
+        db.log_event("ERROR", "SISTEMA", f"Error al actualizar {key_name}: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+
+
 # --- GESTIÓN DE AUTENTICACIÓN (NUEVO) ---
 
 @app.route('/auth-settings')

@@ -62,31 +62,40 @@ class AIHandler:
     GEMINI_CHAT_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash"]
     OPENAI_CHAT_MODEL = "gpt-4o"
     
-    # Clientes asíncronos compartidos (Singletons)
+    # Clientes asíncronos compartidos (Singletons auto-invalidables)
     _async_client_gemini = None
     _async_client_openai = None
-    
+    _gemini_key_used = None   # Clave con la que se creó el cliente Gemini actual
+    _openai_key_used = None   # Clave con la que se creó el cliente OpenAI actual
+
     @staticmethod
     def _get_async_client():
         """Retorna cliente asíncrono para Gemini (OpenAI-compatible).
-        Se crea con la clave actual del entorno (lazy). Si la clave cambia,
-        invalidar el singleton llamando a close_async_client() antes.
+        
+        Si la GEMINI_API_KEY en el entorno cambió desde la última creación
+        del cliente, invalida el singleton y crea uno nuevo con la clave actual.
+        Esto permite cambiar la clave en .env sin reiniciar el proceso.
         """
-        if AIHandler._async_client_gemini is None:
+        current_key = _get_gemini_key()
+        if AIHandler._async_client_gemini is None or AIHandler._gemini_key_used != current_key:
+            if AIHandler._async_client_gemini is not None:
+                logger.info("🔄 GEMINI_API_KEY cambió — recreando cliente Gemini con la nueva clave.")
             AIHandler._async_client_gemini = AsyncOpenAI(
-                api_key=_get_gemini_key(),
+                api_key=current_key,
                 base_url=GEMINI_BASE_URL
             )
+            AIHandler._gemini_key_used = current_key
         return AIHandler._async_client_gemini
 
     @staticmethod
     def _get_openai_client():
-        """Retorna cliente asíncrono real de OpenAI (lazy)."""
-        if AIHandler._async_client_openai is None:
-            AIHandler._async_client_openai = AsyncOpenAI(
-                api_key=_get_openai_key()
-            )
+        """Retorna cliente asíncrono real de OpenAI (auto-invalidable)."""
+        current_key = _get_openai_key()
+        if AIHandler._async_client_openai is None or AIHandler._openai_key_used != current_key:
+            AIHandler._async_client_openai = AsyncOpenAI(api_key=current_key)
+            AIHandler._openai_key_used = current_key
         return AIHandler._async_client_openai
+
 
     @staticmethod
     async def close_async_client():

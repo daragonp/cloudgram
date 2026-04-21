@@ -37,6 +37,7 @@ def start_telegram_bot():
     bot_app.add_handler(main.CommandHandler("listar", main.list_files_command))
     bot_app.add_handler(main.CommandHandler("buscar", main.search_command))
     bot_app.add_handler(main.CommandHandler("buscar_ia", main.search_ia_command))
+    bot_app.add_handler(main.CommandHandler("indexar", main.indexar_command))
     bot_app.add_handler(main.CommandHandler("eliminar", main.delete_command))
     bot_app.add_handler(main.CommandHandler("ayuda", main.help_command))
     bot_app.add_handler(main.CommandHandler("help", main.help_command))
