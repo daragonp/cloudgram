@@ -184,9 +184,82 @@
             </div>
         </div>
     </div>
+
+    <!-- COLUMNA API KEYS (GEMINI / OPENAI) -->
+    <div class="col-lg-6">
+        <div class="glass-panel h-100 p-4 d-flex flex-column" style="border-top: 3px solid #ff9800;">
+            <div class="d-flex align-items-center gap-3 mb-4">
+                <div class="bg-warning bg-opacity-10 p-3 rounded-circle text-warning">
+                    <i class="bi bi-key-fill fs-3"></i>
+                </div>
+                <div>
+                    <h5 class="fw-bold text-white mb-0">API Keys de IA</h5>
+                    <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Cambio en Caliente (Hot-Swap)</small>
+                </div>
+            </div>
+
+            <div class="auth-step">
+                <p class="text-muted small mb-4">Actualiza tus claves de IA al instante sin reiniciar el bot. Esto es útil si agotas tu cuota de Gemini.</p>
+                
+                <div class="mb-3">
+                    <label class="form-label text-muted small fw-bold">Seleccionar Servicio:</label>
+                    <select id="api-key-name" class="form-select bg-dark border-secondary text-white">
+                        <option value="GEMINI_API_KEY">GEMINI_API_KEY (Google AI Studio)</option>
+                        <option value="OPENAI_API_KEY">OPENAI_API_KEY (Búsqueda Semántica)</option>
+                    </select>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label text-muted small fw-bold">Nueva API Key:</label>
+                    <input type="password" id="api-key-value" class="form-control border-warning text-white" placeholder="AIzaSy...">
+                </div>
+
+                <button class="btn btn-warning w-100 py-2 fw-bold" onclick="updateApiKey()">
+                    <i class="bi bi-arrow-clockwise me-2"></i> Actualizar Clave
+                </button>
+            </div>
+            
+            <div id="apikey-result" class="mt-4 d-none">
+                <div class="alert alert-success small mb-0 border-0 bg-success bg-opacity-10 text-success" id="apikey-msg">
+                    <i class="bi bi-check-circle-fill me-2"></i> Clave actualizada.
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
+async function updateApiKey() {
+    const keyName = document.getElementById('api-key-name').value;
+    const keyValue = document.getElementById('api-key-value').value.trim();
+    
+    if (!keyValue) return alert("Por favor ingresa la nueva clave");
+    
+    try {
+        const formData = new FormData();
+        formData.append('key_name', keyName);
+        formData.append('key_value', keyValue);
+        formData.append('csrf_token', document.querySelector('meta[name="csrf-token"]').content);
+        
+        const res = await fetch('/update-api-key', { method: 'POST', body: formData });
+        const data = await res.json();
+        
+        const resultDiv = document.getElementById('apikey-result');
+        const resultMsg = document.getElementById('apikey-msg');
+        
+        resultDiv.classList.remove('d-none');
+        
+        if (data.ok) {
+            resultMsg.className = "alert alert-success small mb-0 border-0 bg-success bg-opacity-10 text-success";
+            resultMsg.innerHTML = `<i class="bi bi-check-circle-fill me-2"></i> ${data.message}`;
+            document.getElementById('api-key-value').value = ""; // Limpiar campo
+        } else {
+            resultMsg.className = "alert alert-danger small mb-0 border-0 bg-danger bg-opacity-10 text-danger";
+            resultMsg.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-2"></i> Error: ${data.error}`;
+        }
+    } catch (e) { alert("Error de red: " + e); }
+}
+
 async function startOneDrive() {
     try {
         const res = await fetch('/auth/onedrive/start', { 

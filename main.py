@@ -1006,6 +1006,8 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 1. Extraer intención de búsqueda (Texto semántico vs Tipo de archivo)
         intent = await AIHandler.analyze_search_intent(query_text)
         semantic_query = intent.get("semantic_query", query_text)
+        if not semantic_query.strip():
+            semantic_query = query_text # Fallback si extrajo solo la extensión
         file_types = intent.get("file_types", [])
         
         # Si el LLM extrajo tipos, se lo decimos al usuario para darle feedback
