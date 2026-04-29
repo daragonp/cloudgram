@@ -60,25 +60,24 @@ else:
     logger.warning("⚠️ OneDriveService no disponible (credenciales faltantes)")
 
 # ============================================================================
-# CLIENTE DE IA - IMPORTANTE
+# CLIENTE DE IA - ARQUITECTURA ACTUAL
 # ============================================================================
 """
-NOTA: El cliente OpenAI-compatible de Gemini SOLO soporta:
-- Chat Completions (gemini-2.0-flash, gemini-1.5-flash)
-- Vision (imágenes)
+Todo el pipeline de IA usa OpenAI:
+  • Embeddings     → text-embedding-3-small  (AIHandler.get_embedding)
+  • Visión/Imágenes → gpt-4o-mini            (AIHandler.analyze_image_vision)
+  • Audio/Voz      → whisper-1               (AIHandler.transcribe_audio)
+  • Resúmenes      → gpt-4o-mini            (AIHandler.generate_summary)
+  • Intención /buscar_ia → gpt-4o           (AIHandler.analyze_search_intent)
 
-NO soporta:
-- Embeddings (usar google.generativeai nativo via AIHandler)
-- Audio (usar google.generativeai nativo via AIHandler)
-
-Para embeddings y transcripción de audio, usar src.utils.ai_handler.AIHandler
+Gemini (GEMINI_API_KEY) ya no se usa en el pipeline principal.
+Se mantiene en .env por compatibilidad pero no es requerida.
 """
 
 openai_client = OpenAI(
-    api_key=os.getenv("GEMINI_API_KEY"),
-    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+    api_key=os.getenv("OPENAI_API_KEY")
 )
-logger.info("✅ Cliente OpenAI-compatible (Gemini) inicializado para chat/vision")
+logger.info("✅ Cliente OpenAI inicializado (embeddings, visión, audio, resúmenes)")
 
 # ============================================================================
 # FUNCIONES DE UTILIDAD
@@ -95,7 +94,7 @@ def test_all_connections():
         "google_drive": False,
         "onedrive": False,
         "gemini_chat": False,
-        "gemini_embedding": False
+        "openai_embedding": False
     }
     
     # Test Database
@@ -140,14 +139,14 @@ def test_all_connections():
     except Exception as e:
         logger.error(f"Error Gemini Chat: {e}")
     
-    # Test Gemini Embedding (via native API)
+    # Test OpenAI Embedding
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        genai.embed_content(model="models/text-embedding-004", content="test")
-        results["gemini_embedding"] = True
+        from openai import OpenAI as _OAI
+        _oa = _OAI(api_key=os.getenv("OPENAI_API_KEY"))
+        _oa.embeddings.create(model="text-embedding-3-small", input="test")
+        results["openai_embedding"] = True
     except Exception as e:
-        logger.error(f"Error Gemini Embedding: {e}")
+        logger.error(f"Error OpenAI Embedding: {e}")
     
     return results
 

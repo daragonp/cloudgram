@@ -300,7 +300,7 @@ async def voice_options_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.edit_message_text("❌ Error: Datos expirados.")
         return
 
-    progress_msg = await query.edit_message_text("⏳ Conectando con el cerebro de IA... (Gemini 2.0)")
+    progress_msg = await query.edit_message_text("⏳ Transcribiendo con OpenAI Whisper... por favor espera.")
     local_audio = os.path.join("descargas", voice_data['file_name'])
     local_txt = local_audio.replace(".ogg", ".txt")
     
@@ -332,8 +332,9 @@ async def voice_options_callback(update: Update, context: ContextTypes.DEFAULT_T
                     user_data.pop('temp_voice', None)
                     if os.path.exists(local_audio): os.remove(local_audio)
                     return
-            except QuotaExceededError:
-                await progress_msg.edit_text("⚠️ *Cuota de IA agotada:* Lo siento, Gemini no puede procesar más audios por este minuto. Inténtalo de nuevo en 60 segundos.", parse_mode=ParseMode.MARKDOWN)
+            except QuotaExceededError as qe:
+                retry_msg = f" Reintenta en {qe.retry_after}s." if qe.retry_after else ""
+                await progress_msg.edit_text(f"⚠️ *Cuota de OpenAI agotada:* No se pudo transcribir el audio.{retry_msg}", parse_mode=ParseMode.MARKDOWN)
                 if os.path.exists(local_audio): os.remove(local_audio)
                 return
             except Exception as e:

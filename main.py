@@ -750,7 +750,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except QuotaExceededError as qe:
             retry_msg = f"\nReintentar en {qe.retry_after}s" if qe.retry_after else ""
             await query.edit_message_text(
-                f"🚫 *Cuota de Gemini agotada.*{retry_msg}\n\n"
+                f"🚫 *Cuota de OpenAI agotada.*{retry_msg}\n\n"
                 f"Espera un momento y vuelve a intentarlo con /indexar.",
                 parse_mode=ParseMode.MARKDOWN
             )
@@ -801,7 +801,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 quota_hit = True
                 retry_msg = f"\u23f0 Reintentar en {qe.retry_after}s" if qe.retry_after else ""
                 await query.edit_message_text(
-                    f"🚫 *Cuota de Gemini agotada.*\n{retry_msg}\n\n"
+                    f"🚫 *Cuota de OpenAI agotada.*\n{retry_msg}\n\n"
                     f"✅ Indexados: {ok_count}/{total}\n"
                     f"Usa /indexar cuando puedas para continuar.",
                     parse_mode=ParseMode.MARKDOWN
@@ -1017,7 +1017,7 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query_vector = await AIHandler.get_embedding(semantic_query)
 
         if not query_vector:
-            return await msg.edit_text("❌ Error generando embedding. Verifica tu API key de Gemini.")
+            return await msg.edit_text("❌ Error generando embedding. Verifica tu OPENAI_API_KEY.")
 
         raw_results = db.search_semantic(query_vector, limit=20, file_types=file_types)
 

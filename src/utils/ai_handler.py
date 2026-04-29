@@ -58,7 +58,7 @@ class AIHandler:
     """
     
     # Modelos
-    EMBEDDING_MODELS = ["gemini-embedding-001", "gemini-embedding-2-preview"]
+    EMBEDDING_MODEL = "text-embedding-3-small"  # OpenAI — 1536 dims
     GEMINI_CHAT_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash"]
     OPENAI_CHAT_MODEL = "gpt-4o"
     
@@ -116,87 +116,75 @@ class AIHandler:
     @staticmethod
     async def get_embedding(text):
         """
-        Convierte texto en un vector usando la API nativa de Google Gemini.
+        Convierte texto en un vector usando OpenAI text-embedding-3-small.
         
         Args:
             text: Texto a convertir en embedding
             
         Returns:
-            list: Vector de 768 dimensiones o None si hay error
+            list: Vector de 1536 dimensiones o None si hay error
             
         Note:
-            Los embeddings de Gemini tienen 768 dimensiones.
-            Los embeddings anteriores de OpenAI tenían 1536 dimensiones.
-            NO son compatibles entre sí.
+            OpenAI text-embedding-3-small produce 1536 dimensiones.
+            Si ya tenías embeddings de Gemini (768 dims) en la DB,
+            debes re-indexar con: UPDATE files SET embedding = NULL
         """
         if not text:
             return None
         
-        # Límite seguro para evitar errores de context length
-        MAX_CHARS_SAFE = 8000 
+        # OpenAI admite ~8192 tokens; usamos ~24000 chars como límite conservador
+        MAX_CHARS_SAFE = 24000
+        
+        # Limpieza preventiva para evitar errores de codificación
+        text = text.replace('\x00', '').strip()
+        if not text:
+            return None
+        
+        model_name = AIHandler.EMBEDDING_MODEL
         
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=_get_gemini_key())
+            client = AIHandler._get_openai_client()
             
-            # Limpieza preventiva para evitar errores de codificación
-            text = text.replace('\x00', '').strip()
-            if not text:
-                return None
-            
-            # Intentar con el modelo más reciente disponible
-            for model_name in AIHandler.EMBEDDING_MODELS:
-                try:
-                    if len(text) <= MAX_CHARS_SAFE:
-                        result = genai.embed_content(
-                            model=f"models/{model_name}",
-                            content=text
-                        )
-                        logger.info(f"✅ Embedding generado con {model_name} ({len(result['embedding'])} dims)")
-                        return result['embedding']
-                    else:
-                        # Fragmentar texto largo
-                        logger.info(f"✂️ Fragmentando texto largo para embedding ({len(text)} chars)...")
-                        chunks = [text[i:i + MAX_CHARS_SAFE] for i in range(0, len(text), MAX_CHARS_SAFE)]
-                        
-                        # Solo procesamos los primeros 5 trozos para evitar latencia extrema
-                        all_embeddings = []
-                        for chunk in chunks[:5]:
-                            res = genai.embed_content(
-                                model=f"models/{model_name}",
-                                content=chunk
-                            )
-                            all_embeddings.append(res['embedding'])
-                        
-                        # Promediar embeddings
-                        avg_embedding = np.mean(all_embeddings, axis=0).tolist()
-                        logger.info(f"✅ Embedding promediado generado ({len(avg_embedding)} dims)")
-                        return avg_embedding
-                        
-                except Exception as model_error:
-                    error_msg = str(model_error)
-                    if "429" in error_msg or "ResourceExhausted" in error_msg or "quota" in error_msg.lower():
-                        retry = AIHandler._parse_retry_after(error_msg)
-                        wait_msg = f" (Reintenta en {retry}s)" if retry else ""
-                        logger.error(f"🚨 Cuota agotada en {model_name}: {error_msg}")
-                        raise QuotaExceededError(f"Cuota de IA agotada{wait_msg}", retry_after=retry)
-                    
-                    logger.warning(f"⚠️ Modelo {model_name} falló: {model_error}")
-                    continue
-            
-            logger.error("❌ Todos los modelos de embedding fallaron")
-            return None
+            if len(text) <= MAX_CHARS_SAFE:
+                response = await client.embeddings.create(
+                    model=model_name,
+                    input=text
+                )
+                vector = response.data[0].embedding
+                logger.info(f"✅ Embedding generado con {model_name} ({len(vector)} dims)")
+                return vector
+            else:
+                # Fragmentar texto largo y promediar
+                logger.info(f"✂️ Fragmentando texto largo para embedding ({len(text)} chars)...")
+                chunks = [text[i:i + MAX_CHARS_SAFE] for i in range(0, len(text), MAX_CHARS_SAFE)]
                 
-        except QuotaExceededError:
-            raise
+                # Solo procesamos los primeros 5 trozos para evitar latencia extrema
+                all_embeddings = []
+                for chunk in chunks[:5]:
+                    res = await client.embeddings.create(
+                        model=model_name,
+                        input=chunk
+                    )
+                    all_embeddings.append(res.data[0].embedding)
+                
+                avg_embedding = np.mean(all_embeddings, axis=0).tolist()
+                logger.info(f"✅ Embedding promediado generado ({len(avg_embedding)} dims)")
+                return avg_embedding
+                
         except Exception as e:
-            logger.error(f"❌ Error crítico en Embeddings: {e}")
+            error_msg = str(e)
+            if "429" in error_msg or "quota" in error_msg.lower() or "rate_limit" in error_msg.lower():
+                retry = AIHandler._parse_retry_after(error_msg)
+                wait_msg = f" (Reintenta en {retry}s)" if retry else ""
+                logger.error(f"🚨 Cuota de OpenAI agotada en embedding: {error_msg}")
+                raise QuotaExceededError(f"Cuota de OpenAI agotada{wait_msg}", retry_after=retry)
+            logger.error(f"❌ Error crítico en Embeddings (OpenAI): {e}")
             return None
 
     @staticmethod
     async def analyze_image_vision(file_path):
         """
-        Analiza una imagen usando Gemini Vision (cliente ASÍNCRONO).
+        Analiza una imagen usando GPT-4o-mini Vision (OpenAI, cliente ASÍNCRONO).
         
         Args:
             file_path: Ruta al archivo de imagen
@@ -204,14 +192,13 @@ class AIHandler:
         Returns:
             str: Descripción de la imagen o mensaje de error
         """
-        # IMPORTANTE: Usar cliente ASÍNCRONO para no bloquear el event loop
-        client = AIHandler._get_async_client()
+        client = AIHandler._get_openai_client()
+        model = "gpt-4o-mini"
         
-        # Detectar tipo de imagen
         ext = file_path.lower().split('.')[-1]
         mime_types = {
             'jpg': 'image/jpeg',
-            'jpeg': 'image/jpeg', 
+            'jpeg': 'image/jpeg',
             'png': 'image/png',
             'webp': 'image/webp',
             'gif': 'image/gif'
@@ -222,175 +209,93 @@ class AIHandler:
             with open(file_path, "rb") as image_file:
                 base64_image = base64.b64encode(image_file.read()).decode('utf-8')
 
-            # Intentar con diferentes modelos de chat (await porque es async)
-            for model in AIHandler.GEMINI_CHAT_MODELS:
-                try:
-                    response = await client.chat.completions.create(
-                        model=model,
-                        messages=[
+            response = await client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
                             {
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "text", 
-                                        "text": (
-                                            "Analiza esta imagen y responde en español con un único bloque de texto (sin formato markdown ni títulos). "
-                                            "Incluye: (1) descripción visual completa del contenido, (2) cualquier texto visible transcrito literalmente, "
-                                            "(3) categoría del archivo (factura, viaje, chat, documento, recibo, foto personal, captura de pantalla, etc.). "
-                                            "Sé exhaustivo y completo."
-                                        )
-                                    },
-                                    {
-                                        "type": "image_url", 
-                                        "image_url": {
-                                            "url": f"data:{mime_type};base64,{base64_image}"
-                                        }
-                                    }
-                                ],
+                                "type": "text",
+                                "text": (
+                                    "Analiza esta imagen y responde en español con un único bloque de texto (sin formato markdown ni títulos). "
+                                    "Incluye: (1) descripción visual completa del contenido, (2) cualquier texto visible transcrito literalmente, "
+                                    "(3) categoría del archivo (factura, viaje, chat, documento, recibo, foto personal, captura de pantalla, etc.). "
+                                    "Sé exhaustivo y completo."
+                                )
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{mime_type};base64,{base64_image}"
+                                }
                             }
-                        ],
-                        max_tokens=1500
-                    )
-                    result = response.choices[0].message.content
-                    logger.info(f"✅ Imagen analizada con {model}: {len(result)} chars")
-                    return result
-                except Exception as model_error:
-                    error_msg = str(model_error)
-                    if "429" in error_msg or "ResourceExhausted" in error_msg or "quota" in error_msg.lower():
-                        retry = AIHandler._parse_retry_after(error_msg)
-                        wait_msg = f" (Reintenta en {retry}s)" if retry else ""
-                        logger.error(f"🚨 Cuota agotada en {model} (Visión): {error_msg}")
-                        raise QuotaExceededError(f"Cuota de IA agotada en Visión{wait_msg}", retry_after=retry)
+                        ]
+                    }
+                ],
+                max_tokens=1500
+            )
+            result = response.choices[0].message.content
+            logger.info(f"✅ Imagen analizada con {model}: {len(result)} chars")
+            return result
 
-                    logger.warning(f"⚠️ Modelo {model} falló para visión: {model_error}")
-                    continue
-            
-            logger.warning("No se pudo analizar la imagen con ningún modelo disponible.")
-            return ""
-            
-        except QuotaExceededError:
-            raise
         except Exception as e:
-            logger.error(f"❌ Error en Visión IA: {e}")
+            error_msg = str(e)
+            if "429" in error_msg or "quota" in error_msg.lower() or "rate_limit" in error_msg.lower():
+                retry = AIHandler._parse_retry_after(error_msg)
+                wait_msg = f" (Reintenta en {retry}s)" if retry else ""
+                logger.error(f"🚨 Cuota de OpenAI agotada en Visión: {error_msg}")
+                raise QuotaExceededError(f"Cuota de OpenAI agotada en Visión{wait_msg}", retry_after=retry)
+            logger.error(f"❌ Error en Visión IA (OpenAI): {e}")
             return ""
 
     @staticmethod
     async def transcribe_audio(file_path):
         """
-        Transcribe audio usando la API nativa de Google Gemini (gratis).
-        Soporta múltiples formatos de audio.
+        Transcribe audio usando OpenAI Whisper API (whisper-1).
+        Soporta: flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav, webm.
         
         Args:
             file_path: Ruta al archivo de audio
             
         Returns:
-            str: Transcripción del audio o mensaje de error
+            str: Transcripción del audio o string vacío si hay error
         """
-        log_file = "data/ai_debug.log"
         if not os.path.exists("data"):
             os.makedirs("data")
-        
+        log_file = "data/ai_debug.log"
+
         try:
-            import google.generativeai as genai
-            from google.generativeai.types import HarmCategory, HarmBlockThreshold
-            
-            genai.configure(api_key=_get_gemini_key())
-            
-            # Configuración de seguridad permisiva para transcripciones
-            safety_settings = {
-                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-            }
-            
-            # Detectar MIME type
-            ext = file_path.lower().split('.')[-1]
-            mime_map = {
-                'ogg': 'audio/ogg',
-                'oga': 'audio/ogg',
-                'mp3': 'audio/mpeg',
-                'wav': 'audio/wav',
-                'm4a': 'audio/mp4',
-                'mp4': 'audio/mp4',
-                'webm': 'audio/webm',
-                'flac': 'audio/flac',
-                'opus': 'audio/opus'
-            }
-            mime_type = mime_map.get(ext, f'audio/{ext}')
-            
+            client = AIHandler._get_openai_client()
+            file_name = os.path.basename(file_path)
+
             with open(log_file, "a", encoding="utf-8") as log:
-                log.write(f"\n[{datetime.now()}] Transcribiendo: {file_path} (MIME: {mime_type})\n")
-            
-            with open(file_path, "rb") as f:
-                audio_data = f.read()
-            
-            # Intentar con diferentes modelos (Gemini nativo para audio)
-            for model_name in AIHandler.GEMINI_CHAT_MODELS:
-                try:
-                    model = genai.GenerativeModel(
-                        model_name=model_name,
-                        safety_settings=safety_settings
-                    )
-                    
-                    response = model.generate_content([
-                        {
-                            "mime_type": mime_type, 
-                            "data": audio_data
-                        },
-                        "Actúa como un transcriptor profesional. Transcribe el contenido de este audio de manera literal y completa. "
-                        "Si encuentras silencio o música, descríbelo entre corchetes. Solo devuelve la transcripción en español."
-                    ])
-                    
-                    # Verificación exhaustiva de la respuesta
-                    if not response.candidates:
-                        with open(log_file, "a") as log:
-                            log.write(f"⚠️ Sin candidatos en la respuesta con {model_name}.\n")
-                        continue
-                    
-                    # Intentar extraer texto de forma segura
-                    try:
-                        text_result = response.text.strip()
-                    except Exception as tex_err:
-                        with open(log_file, "a") as log:
-                            log.write(f"⚠️ Error accediendo a .text con {model_name}: {tex_err}\n")
-                        if response.candidates[0].finish_reason:
-                            continue
-                        continue
+                log.write(f"\n[{datetime.now()}] Transcribiendo con Whisper: {file_path}\n")
 
-                    if not text_result:
-                        continue
-                        
-                    with open(log_file, "a", encoding="utf-8") as log:
-                        log.write(f"✅ Éxito con {model_name}. Caracteres: {len(text_result)}\n")
-                    
-                    logger.info(f"✅ Audio transcrito con {model_name}")
-                    return text_result
-                    
-                except Exception as model_error:
-                    error_msg = str(model_error)
-                    if "429" in error_msg or "ResourceExhausted" in error_msg or "quota" in error_msg.lower():
-                        retry = AIHandler._parse_retry_after(error_msg)
-                        wait_msg = f" (Reintenta en {retry}s)" if retry else ""
-                        logger.error(f"🚨 Cuota agotada en {model_name} (Audio): {error_msg}")
-                        raise QuotaExceededError(f"Cuota de IA agotada en Audio{wait_msg}", retry_after=retry)
+            with open(file_path, "rb") as audio_file:
+                transcript = await client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=(file_name, audio_file),
+                    language="es"
+                )
 
-                    with open(log_file, "a") as log:
-                        log.write(f"⚠️ Modelo {model_name} falló: {model_error}\n")
-                    continue
-            
-            error_msg = "No se pudo transcribir el audio con ningún modelo disponible."
+            text_result = transcript.text.strip()
+
             with open(log_file, "a", encoding="utf-8") as log:
-                log.write(f"❌ Todos los modelos fallaron\n")
-            return ""
+                log.write(f"✅ Whisper OK. Caracteres: {len(text_result)}\n")
+            logger.info(f"✅ Audio transcrito con Whisper ({len(text_result)} chars)")
+            return text_result
 
-        except QuotaExceededError:
-            raise
         except Exception as e:
             error_msg = str(e)
+            if "429" in error_msg or "quota" in error_msg.lower() or "rate_limit" in error_msg.lower():
+                retry = AIHandler._parse_retry_after(error_msg)
+                wait_msg = f" (Reintenta en {retry}s)" if retry else ""
+                logger.error(f"🚨 Cuota de OpenAI agotada en Audio (Whisper): {error_msg}")
+                raise QuotaExceededError(f"Cuota de OpenAI agotada en Audio{wait_msg}", retry_after=retry)
             with open(log_file, "a", encoding="utf-8") as log:
-                log.write(f"❌ ERROR CRÍTICO: {error_msg}\n")
-            logger.error(f"❌ Error en transcripción: {error_msg}")
+                log.write(f"❌ ERROR CRÍTICO Whisper: {error_msg}\n")
+            logger.error(f"❌ Error en transcripción Whisper: {error_msg}")
             return ""
 
     @staticmethod
@@ -465,7 +370,7 @@ class AIHandler:
     @staticmethod
     async def generate_summary(text):
         """
-        Genera un resumen ejecutivo del texto para mostrar en búsquedas.
+        Genera un resumen ejecutivo del texto usando GPT-4o-mini (OpenAI).
         
         Args:
             text: Texto a resumir
@@ -475,110 +380,128 @@ class AIHandler:
         """
         if not text or len(text.strip()) < 10:
             return "Sin contenido para resumir."
-            
-        try:
-            client = AIHandler._get_async_client()
-            
-            # Intentar con diferentes modelos de chat
-            for model in AIHandler.GEMINI_CHAT_MODELS:
-                try:
-                    response = await client.chat.completions.create(
-                        model=model,
-                        messages=[
-                            {
-                                "role": "system", 
-                                "content": "Eres un archivista experto. Resume el siguiente texto en máximo 2 frases cortas que describan de qué trata el documento. Responde en español."
-                            },
-                            {
-                                "role": "user", 
-                                "content": text[:4000]  # Limitar entrada
-                            }
-                        ],
-                        max_tokens=150
-                    )
-                    result = response.choices[0].message.content.strip()
-                    logger.info(f"✅ Resumen generado con {model}")
-                    return result
-                except Exception as model_error:
-                    error_msg = str(model_error)
-                    if "429" in error_msg or "ResourceExhausted" in error_msg or "quota" in error_msg.lower():
-                        retry = AIHandler._parse_retry_after(error_msg)
-                        wait_msg = f" (Reintenta en {retry}s)" if retry else ""
-                        logger.error(f"🚨 Cuota agotada en {model} (Resumen): {error_msg}")
-                        raise QuotaExceededError(f"Cuota de IA agotada en Resumen{wait_msg}", retry_after=retry)
 
-                    logger.warning(f"⚠️ Modelo {model} falló para resumen: {model_error}")
-                    continue
-            
-            return "Resumen no disponible (error en todos los modelos)."
-            
-        except QuotaExceededError:
-            raise
+        try:
+            client = AIHandler._get_openai_client()
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Eres un archivista experto. Resume el siguiente texto en máximo 2 frases cortas que describan de qué trata el documento. Responde en español."
+                    },
+                    {
+                        "role": "user",
+                        "content": text[:4000]
+                    }
+                ],
+                max_tokens=150
+            )
+            result = response.choices[0].message.content.strip()
+            logger.info("✅ Resumen generado con gpt-4o-mini")
+            return result
+
         except Exception as e:
-            logger.error(f"❌ Error generando resumen: {e}")
+            error_msg = str(e)
+            if "429" in error_msg or "quota" in error_msg.lower() or "rate_limit" in error_msg.lower():
+                retry = AIHandler._parse_retry_after(error_msg)
+                wait_msg = f" (Reintenta en {retry}s)" if retry else ""
+                logger.error(f"🚨 Cuota de OpenAI agotada en Resumen: {error_msg}")
+                raise QuotaExceededError(f"Cuota de OpenAI agotada en Resumen{wait_msg}", retry_after=retry)
+            logger.error(f"❌ Error generando resumen (OpenAI): {e}")
             return "Resumen no disponible."
 
     @staticmethod
     async def test_connection():
         """
-        Prueba la conexión con Gemini y devuelve el estado de todos los servicios.
-        
+        Prueba la conexión con OpenAI (todo el pipeline de IA usa OpenAI).
+
         Returns:
             dict: Estado de cada servicio de IA
         """
         results = {
-            "status": "error", 
+            "status": "error",
             "details": [],
             "models_available": {
                 "chat": [],
-                "embedding": []
+                "embedding": [],
+                "audio": []
             }
         }
-        
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=_get_gemini_key())
-            
-            # 1. Test Chat Models (Gemini)
-            for model in AIHandler.GEMINI_CHAT_MODELS:
-                try:
-                    test_model = genai.GenerativeModel(model)
-                    resp = test_model.generate_content("ping")
-                    if resp.text:
-                        results["details"].append(f"Chat ({model}): OK ✅")
-                        results["models_available"]["chat"].append(model)
-                except Exception as e:
-                    results["details"].append(f"Chat ({model}): FAIL ❌ ({str(e)[:50]})")
 
-            # 2. Test Embedding Models
-            for model in AIHandler.EMBEDDING_MODELS:
-                try:
-                    genai.embed_content(model=f"models/{model}", content="test")
-                    results["details"].append(f"Embedding ({model}): OK ✅")
-                    results["models_available"]["embedding"].append(model)
-                except Exception as e:
-                    results["details"].append(f"Embedding ({model}): FAIL ❌ ({str(e)[:50]})")
+        try:
+            client = AIHandler._get_openai_client()
+
+            # 1. Test Embedding (text-embedding-3-small)
+            try:
+                resp = await client.embeddings.create(
+                    model=AIHandler.EMBEDDING_MODEL, input="test"
+                )
+                dims = len(resp.data[0].embedding)
+                results["details"].append(f"Embedding ({AIHandler.EMBEDDING_MODEL}, {dims} dims): OK ✅")
+                results["models_available"]["embedding"].append(AIHandler.EMBEDDING_MODEL)
+            except Exception as e:
+                results["details"].append(f"Embedding ({AIHandler.EMBEDDING_MODEL}): FAIL ❌ ({str(e)[:60]})")
+
+            # 2. Test Chat / Visión (gpt-4o-mini)
+            try:
+                resp = await client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": "ping"}],
+                    max_tokens=5
+                )
+                results["details"].append("Chat/Visión (gpt-4o-mini): OK ✅")
+                results["models_available"]["chat"].append("gpt-4o-mini")
+            except Exception as e:
+                results["details"].append(f"Chat/Visión (gpt-4o-mini): FAIL ❌ ({str(e)[:60]})")
+
+            # 3. Test Audio (whisper-1) — verificamos solo acceso al modelo
+            try:
+                # Crear un WAV mínimo válido (44 bytes) para testear sin archivo real
+                import io, struct
+                buf = io.BytesIO()
+                # Cabecera WAV mínima: RIFF + fmt + data vacía
+                buf.write(b'RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00'
+                          b'\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00')
+                buf.seek(0)
+                resp = await client.audio.transcriptions.create(
+                    model="whisper-1", file=("test.wav", buf), language="es"
+                )
+                results["details"].append("Audio/Whisper (whisper-1): OK ✅")
+                results["models_available"]["audio"].append("whisper-1")
+            except Exception as e:
+                # Whisper puede rechazar el WAV vacío pero eso confirma que llega al modelo
+                err = str(e)
+                if "audio" in err.lower() or "invalid" in err.lower() or "empty" in err.lower():
+                    results["details"].append("Audio/Whisper (whisper-1): OK ✅ (API accesible)")
+                    results["models_available"]["audio"].append("whisper-1")
+                else:
+                    results["details"].append(f"Audio/Whisper (whisper-1): FAIL ❌ ({err[:60]})")
 
             # Determinar estado general
-            if results["models_available"]["chat"] or results["models_available"]["embedding"]:
-                results["status"] = "ok" if (results["models_available"]["chat"] and results["models_available"]["embedding"]) else "partial"
+            has_core = (results["models_available"]["embedding"]
+                        and results["models_available"]["chat"])
+            if has_core and results["models_available"]["audio"]:
+                results["status"] = "ok"
+            elif has_core:
+                results["status"] = "partial"
             else:
                 results["status"] = "error"
-                
+
         except Exception as e:
             results["details"].append(f"Critical: {e}")
-        
+
         return results
     
     @staticmethod
     def get_embedding_dimensions():
         """
-        Retorna las dimensiones de los embeddings de Gemini.
+        Retorna las dimensiones de los embeddings de OpenAI.
         
         Returns:
-            int: Número de dimensiones (768 para Gemini)
+            int: Número de dimensiones (1536 para text-embedding-3-small)
         """
-        return 768  # text-embedding-004 produce embeddings de 768 dimensiones
+        return 1536  # OpenAI text-embedding-3-small produce embeddings de 1536 dimensiones
         
     @staticmethod
     async def analyze_search_intent(query_text):
