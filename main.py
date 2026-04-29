@@ -305,7 +305,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         texto += f"☁️ *Almacenamiento:*\n"
         texto += f"🔹 Dropbox: `{services_count.get('dropbox', 0)}` \n"
-        texto += f"🔹 G. Drive: `{services_count.get('drive', 0)}` \n"
+        texto += f"🔹 Google Drive: `{services_count.get('drive', 0)}` \n"
         texto += f"🔹 OneDrive: `{services_count.get('onedrive', 0)}` \n\n"
         
         texto += f"📸 *Multimedia:* `{count_fotos}`\n"
@@ -314,9 +314,36 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         texto += f"🔌 *Estado de Servicios:*\n"
         texto += f"🗄️ Base de datos: {'`ONLINE ✅`' if db_status else '`OFFLINE ❌`'}\n"
         
+        # Dropbox Status check
+        from src.init_services import dropbox_svc, onedrive_svc
+        try:
+            dbx_status = '`ONLINE ✅`' if (dropbox_svc and dropbox_svc.client) else '`OFFLINE ❌`'
+        except:
+            dbx_status = '`OFFLINE ❌`'
+        texto += f"☁️ Dropbox API: {dbx_status}\n"
+
+        # Drive Status check
+        try:
+            from src.scripts.refresh_drive_token import refresh_google_token
+            import contextlib, io
+            with contextlib.redirect_stdout(io.StringIO()):
+                drv_status = '`ONLINE ✅`' if refresh_google_token() else '`OFFLINE ❌`'
+        except:
+            drv_status = '`OFFLINE ❌`'
+        texto += f"☁️ Google Drive API: {drv_status}\n"
+
         # OneDrive Status check
         od_status = '`ONLINE ✅`' if (onedrive_svc and onedrive_svc.app and onedrive_svc._get_access_token()) else '`OFFLINE ❌`'
         texto += f"☁️ OneDrive API: {od_status}\n"
+
+        # OpenAI Status check
+        from src.utils.ai_handler import AIHandler
+        try:
+            ai_health = await AIHandler.test_connection()
+            ai_status_str = ", ".join([f"{k}: {'✅' if v else '❌'}" for k, v in ai_health.items()])
+            texto += f"🧠 OpenAI: `{ai_status_str}`\n"
+        except:
+            texto += f"🧠 OpenAI: `OFFLINE ❌`\n"
         
         db.log_event("INFO", "BOT", "Comando /stats consultado con éxito.")
         await update.message.reply_text(texto, parse_mode=ParseMode.MARKDOWN)

@@ -27,8 +27,24 @@ from google_auth_oauthlib.flow import Flow
 # Inicialización
 db = DatabaseHandler()
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev_key_only")
+
+# Seguridad Crítica: Clave secreta
+flask_secret = os.getenv("FLASK_SECRET_KEY")
+if not flask_secret or flask_secret == "dev_key_only":
+    flask_secret = os.urandom(24)
+app.secret_key = flask_secret
+
 csrf = CSRFProtect(app)
+
+# Limitador de tasa
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://"
+)
 
 # Estado global para control de procesos (Cancellation tokens)
 app.stop_embeddings = False
@@ -155,6 +171,7 @@ def index():
     return render_template('index.html')
 
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("5 per minute")
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('dashboard'))
@@ -555,13 +572,11 @@ def health_check():
         return jsonify({
             "status": status,
             "database": "online" if db_ok else "offline",
-            "timestamp": datetime.now().isoformat(),
-            "service": "cloudgram-pro"
+            "timestamp": datetime.now().isoformat()
         }), 200 if db_ok else 503
     except Exception as e:
         return jsonify({
             "status": "error",
-            "message": str(e),
             "timestamp": datetime.now().isoformat()
         }), 500
 
@@ -586,6 +601,30 @@ def fix_drive_token():
     return redirect(url_for('dashboard'))
 
 
+def save_env_secret(key_name, new_value):
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+    if os.path.exists(env_path):
+        with open(env_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+    else:
+        lines = []
+
+    key_found = False
+    new_lines = []
+    for line in lines:
+        if line.startswith(f'{key_name}=') or line.startswith(f'{key_name}="'):
+            new_lines.append(f'{key_name}="{new_value}"\n')
+            key_found = True
+        else:
+            new_lines.append(line)
+
+    if not key_found:
+        new_lines.append(f'{key_name}="{new_value}"\n')
+
+    with open(env_path, 'w', encoding='utf-8') as f:
+        f.writelines(new_lines)
+    os.environ[key_name] = new_value
+
 @app.route('/update-api-key', methods=['POST'])
 @login_required
 def update_api_key():
@@ -604,38 +643,8 @@ def update_api_key():
     if key_name not in ALLOWED_KEYS:
         return jsonify({"ok": False, "error": f"Clave no permitida: {key_name}"}), 400
 
-    if not new_value:
-        return jsonify({"ok": False, "error": "El valor de la clave no puede estar vacío"}), 400
-
-    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
-
     try:
-        # 1. Leer el .env actual
-        if os.path.exists(env_path):
-            with open(env_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-        else:
-            lines = []
-
-        # 2. Buscar y reemplazar (o agregar si no existe)
-        key_found = False
-        new_lines = []
-        for line in lines:
-            if line.startswith(f'{key_name}=') or line.startswith(f'{key_name}="'):
-                new_lines.append(f'{key_name}="{new_value}"\n')
-                key_found = True
-            else:
-                new_lines.append(line)
-
-        if not key_found:
-            new_lines.append(f'{key_name}="{new_value}"\n')
-
-        # 3. Escribir el .env actualizado
-        with open(env_path, 'w', encoding='utf-8') as f:
-            f.writelines(new_lines)
-
-        # 4. Actualizar el proceso actual (os.environ) sin reiniciar
-        os.environ[key_name] = new_value
+        save_env_secret(key_name, new_value)
 
         # 5. Invalidar el singleton de AIHandler para forzar recreación con la nueva clave
         try:
@@ -712,13 +721,15 @@ def auth_dropbox_finish():
             
         oauth_result = flow.finish(code)
         
+        # Guardar en .env
+        save_env_secret("DROPBOX_REFRESH_TOKEN", oauth_result.refresh_token)
+
         # Limpiar flujo
         app.auth_flows['dropbox'].pop(current_user.id, None)
         
         return {
             "ok": True, 
-            "refresh_token": oauth_result.refresh_token,
-            "message": "¡Token obtenido con éxito!"
+            "message": "¡Token guardado de forma segura en el servidor!"
         }, 200
     except Exception as e:
         return {"ok": False, "error": str(e)}, 500
@@ -781,13 +792,15 @@ def auth_drive_finish():
         flow.fetch_token(code=code)
         creds = flow.credentials
         
+        # Guardar en .env
+        save_env_secret("GOOGLE_DRIVE_TOKEN_JSON", creds.to_json())
+
         # Limpiar flujo
         app.auth_flows['google'].pop(current_user.id, None)
         
         return {
             "ok": True, 
-            "token_json": creds.to_json(),
-            "message": "¡Token de Drive generado!"
+            "message": "¡Token de Drive guardado de forma segura en el servidor!"
         }, 200
     except Exception as e:
         return {"ok": False, "error": str(e)}, 500
@@ -1137,11 +1150,11 @@ def auth_onedrive_finish():
         )
         
         if "refresh_token" in result:
+            save_env_secret("ONEDRIVE_REFRESH_TOKEN", result["refresh_token"])
             app.auth_flows['onedrive'].pop(current_user.id, None)
             return {
                 "ok": True, 
-                "refresh_token": result["refresh_token"],
-                "message": "¡Token de OneDrive obtenido!"
+                "message": "¡Token de OneDrive guardado de forma segura en el servidor!"
             }, 200
         else:
             return {"ok": False, "error": result.get("error_description", "Error desconocido en Azure")}, 400

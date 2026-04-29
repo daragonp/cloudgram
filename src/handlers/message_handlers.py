@@ -71,31 +71,8 @@ if not os.path.exists("descargas"):
     os.makedirs("descargas")
     
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✨ *CloudGram Pro Activo*", parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text("✨ *CloudGram Activo*", parse_mode=ParseMode.MARKDOWN)
 
-async def buscar_ia_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("🔎 *Uso:* `/buscar_ia ¿dónde está el contrato?`", parse_mode=ParseMode.MARKDOWN)
-        return
-
-    query = " ".join(context.args)
-    espera_msg = await update.message.reply_text("🤖 Consultando a mi memoria neuronal...")
-
-    try:
-        response = openai_client.embeddings.create(input=[query], model="text-embedding-3-small")
-        query_vector = response.data[0].embedding
-        resultados = db.search_semantic(query_vector, limit=3)
-
-        if resultados and resultados[0][3] > 0.3:
-            texto_respuesta = "🎯 *He encontrado estos archivos:*\n\n"
-            for res in resultados:
-                porcentaje = int(res[3] * 100)
-                texto_respuesta += f"📄 *{res[1]}* ({porcentaje}% coincidencia)\n🔗 [Ver archivo]({res[2]})\n\n"
-            await espera_msg.edit_text(texto_respuesta, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
-        else:
-            await espera_msg.edit_text("😔 No encontré nada con ese contexto.")
-    except Exception as e:
-        await espera_msg.edit_text("❌ Error al procesar la búsqueda con IA.")
 
 async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from main import db, dropbox_svc, drive_svc
@@ -154,7 +131,7 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                          f"Maps: https://www.google.com/maps?q={lat},{lon}")
         
         file_name = f"Ubicacion_{ts_str}.txt"
-        local_path = os.path.join("descargas", file_name)
+        local_path = os.path.join("descargas", os.path.basename(file_name))
         if not os.path.exists("descargas"): os.makedirs("descargas")
         with open(local_path, "w", encoding="utf-8") as f:
             f.write(texto_extraido)
@@ -189,7 +166,7 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if folder_id:
         msg = await update.message.reply_text(f"📥 Procesando para *{user_data.get('current_path_name', 'Nube')}*...", parse_mode=ParseMode.MARKDOWN)
-        local_path = os.path.join("descargas", file_name)
+        local_path = os.path.join("descargas", os.path.basename(file_name))
         if not os.path.exists("descargas"): os.makedirs("descargas")
         
         try:
@@ -301,7 +278,7 @@ async def voice_options_callback(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     progress_msg = await query.edit_message_text("⏳ Transcribiendo con OpenAI Whisper... por favor espera.")
-    local_audio = os.path.join("descargas", voice_data['file_name'])
+    local_audio = os.path.join("descargas", os.path.basename(voice_data['file_name']))
     local_txt = local_audio.replace(".ogg", ".txt")
     
     if not os.path.exists("descargas"): os.makedirs("descargas")
@@ -327,15 +304,10 @@ async def voice_options_callback(update: Update, context: ContextTypes.DEFAULT_T
                         await progress_msg.edit_text(f"❌ *Error en la transcripción:*\n\n{transcripcion}", parse_mode="Markdown")
                     else:
                         await progress_msg.edit_text(f"📝 *Transcripción:* \n\n{transcripcion}", parse_mode="Markdown")
-                    
-                    # Limpiar
-                    user_data.pop('temp_voice', None)
-                    if os.path.exists(local_audio): os.remove(local_audio)
                     return
             except QuotaExceededError as qe:
                 retry_msg = f" Reintenta en {qe.retry_after}s." if qe.retry_after else ""
                 await progress_msg.edit_text(f"⚠️ *Cuota de OpenAI agotada:* No se pudo transcribir el audio.{retry_msg}", parse_mode=ParseMode.MARKDOWN)
-                if os.path.exists(local_audio): os.remove(local_audio)
                 return
             except Exception as e:
                 await progress_msg.edit_text(f"❌ Error crítico: {str(e)}")
@@ -382,10 +354,18 @@ async def voice_options_callback(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         await progress_msg.edit_text(f"❌ Error crítico: {str(e)}")
     finally:
-        # sólo borramos los ficheros locales si no estamos esperando subirlos
-        if action == "voice_only_view":
-            if os.path.exists(local_audio): os.remove(local_audio)
+        # Siempre limpiamos el temporal de memoria
         user_data.pop('temp_voice', None)
+        # Si la acción era solo ver, o si hubo error y se detuvo la ejecución,
+        # limpiamos el archivo descargado. (Si es subida, el archivo se procesará
+        # y limpiará en la otra función correspondiente después del menú de nube).
+        if action == "voice_only_view":
+            if os.path.exists(local_audio): 
+                try: os.remove(local_audio)
+                except: pass
+            if os.path.exists(local_txt):
+                try: os.remove(local_txt)
+                except: pass
         
 async def send_explorer(update: Update, context: ContextTypes.DEFAULT_TYPE, folder_id=None, page=0):
     from main import db

@@ -86,7 +86,7 @@ async def _indexar_si_falta(name, servicio, reporte, progreso_callback=None):
 
     if progreso_callback: await progreso_callback(f"Procesando: {name} ({servicio})...")
     
-    local_path = os.path.join("descargas", name)
+    local_path = os.path.join("descargas", os.path.basename(name))
     extension = name.split('.')[-1].lower() if '.' in name else 'desconocido'
     
     try:
@@ -202,7 +202,7 @@ async def procesar_un_archivo_core(fid, name, servicio, cloud_url, content_text,
         else:
             # CASO B: Sin texto → intentar descargar y analizar
             await log(f"   ↳ Sin content_text, descargando para análisis IA...")
-            local_path = os.path.join("descargas", name)
+            local_path = os.path.join("descargas", os.path.basename(name))
             if not os.path.exists("descargas"):
                 os.makedirs("descargas")
 
