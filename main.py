@@ -590,7 +590,11 @@ async def upload_process(update, context, target_files_info: list, predefined_em
                 print(f"Error subiendo a {cloud}: {e}")
                 cloud_links.append(f"❌ {cloud.capitalize()}")
 
-        final_report.append(f"📄 `{file_name}`\n" + " | ".join(cloud_links))
+        report_item = f"📄 `{file_name}`\n" + " | ".join(cloud_links)
+        if resumen and "No se extrajo texto" not in resumen and "IA temporalmente saturada" not in resumen:
+            report_item += f"\n💡 *Resumen:* _{resumen}_"
+        final_report.append(report_item)
+        
         if os.path.exists(local_path): os.remove(local_path)
         db.log_event("SUCCESS", "BOT", f"Archivo subido y registrado: {file_name}", {"clouds": list(selected_clouds), "links": len(cloud_links)})
 
