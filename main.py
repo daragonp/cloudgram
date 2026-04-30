@@ -296,13 +296,13 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 services_count = {row[0]: row[1] for row in rows}
 
                 # IA
-                cur.execute("SELECT COUNT(*) FROM files WHERE embedding IS NOT NULL AND embedding NOT IN ('', '[]', 'error_limit')")
+                cur.execute("SELECT COUNT(*) FROM files WHERE embedding IS NOT NULL")
                 count_ia = cur.fetchone()[0]
 
                 cur.execute("SELECT COUNT(*) FROM files WHERE type IN ('🖼️ Foto', '🎥 Video', 'jpg', 'png', 'jpeg') OR name ILIKE '%.jpg' OR name ILIKE '%.png' OR name ILIKE '%.jpeg'")
                 count_fotos = cur.fetchone()[0]
 
-                cur.execute("SELECT COUNT(*) FROM files WHERE embedding IS NULL OR embedding IN ('', '[]', 'error_limit')")
+                cur.execute("SELECT COUNT(*) FROM files WHERE embedding IS NULL")
                 count_pending = cur.fetchone()[0]
                 
         db_status = db.check_connection()

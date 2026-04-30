@@ -280,7 +280,7 @@ async def procesar_un_archivo_core(fid, name, servicio, cloud_url, content_text,
                             content_text = COALESCE(%s, content_text)
                         WHERE name = %s 
                         AND id != %s
-                        AND (embedding IS NULL OR embedding IN ('', '[]', 'error_limit'))
+                        AND embedding IS NULL
                     """, (emb_str, resumen, texto_limpio, name, fid))
                     
                     propagated = cur.rowcount
@@ -317,7 +317,7 @@ async def generar_embeddings_pendientes(limite: int, progreso_callback=None, che
                 sql = """
                     SELECT id, name, service, cloud_url, content_text
                     FROM files
-                    WHERE embedding IS NULL OR embedding IN ('', '[]', 'error_limit')
+                    WHERE embedding IS NULL
                     ORDER BY created_at DESC
                 """
                 if limite > 0:

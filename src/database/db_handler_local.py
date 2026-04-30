@@ -114,7 +114,7 @@ class DatabaseHandler:
                 SELECT id, name, cloud_url, service, content_text, embedding 
                 FROM files 
                 WHERE embedding IS NOT NULL 
-                AND embedding NOT IN ('', '[]', 'error_limit')
+                AND embedding IS NOT NULL
             ''')
             # Retornamos los 6 valores exactos
             return [(r['id'], r['name'], r['cloud_url'], r['service'], r['content_text'], r['embedding']) 

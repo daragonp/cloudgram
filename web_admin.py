@@ -247,15 +247,13 @@ def dashboard():
                 cur.execute("""
                     SELECT COUNT(*) FROM files 
                     WHERE embedding IS NOT NULL
-                    AND embedding NOT IN ('', '[]', 'error_limit')
                 """)
                 count_ia = cur.fetchone()[0]
 
                 # 3. Pendientes reales
                 cur.execute("""
                     SELECT COUNT(*) FROM files 
-                    WHERE embedding IS NULL 
-                    OR embedding IN ('', '[]', 'error_limit')
+                    WHERE embedding IS NULL
                 """)
                 count_pending = cur.fetchone()[0]
 
@@ -881,7 +879,6 @@ def archivos_errores():
                     SELECT id, name, cloud_url, service, created_at, content_text
                     FROM files
                     WHERE embedding IS NULL
-                    OR embedding IN ('', '[]', 'error_limit')
                     ORDER BY created_at DESC
                 """)
                 rows = cur.fetchall()
