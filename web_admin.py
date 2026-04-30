@@ -276,7 +276,20 @@ def dashboard():
             drive_status = False
         
         dropbox_status = True  # Status base para Dropbox
-        
+
+        # Redis Status
+        redis_status = False
+        redis_configured = False
+        redis_url = os.getenv('REDIS_URL') or os.getenv('REDIS_BROKER_URL') or os.getenv('REDIS_URI')
+        if redis_url:
+            redis_configured = True
+            try:
+                import redis
+                client = redis.from_url(redis_url, socket_connect_timeout=2, socket_timeout=2)
+                redis_status = bool(client.ping())
+            except Exception:
+                redis_status = False
+
         # OneDrive Status
         onedrive_status = False
         if onedrive_svc and onedrive_svc.app:
@@ -294,6 +307,8 @@ def dashboard():
             total_fotos=count_fotos,
             total_pending=count_pending,
             db_status=db_status,
+            redis_status=redis_status,
+            redis_configured=redis_configured,
             drive_status=drive_status,
             dropbox_status=dropbox_status,
             onedrive_status=onedrive_status
@@ -303,11 +318,8 @@ def dashboard():
         print(f"❌ Error dashboard: {e}")
         return render_template("dashboard.html",
                                total_total=0, total_ia=0, total_fotos=0, total_pending=0,
-                               db_status=False, drive_status=False, dropbox_status=False)
-
-# --- GESTIÓN DE ARCHIVOS ---
-
-@app.route('/delete/<int:file_id>')
+            db_status=False, redis_status=False, redis_configured=False,
+            drive_status=False, dropbox_status=False, onedrive_status=False)
 @login_required
 def delete_file(file_id):
     try:
