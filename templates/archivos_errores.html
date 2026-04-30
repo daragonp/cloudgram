@@ -91,7 +91,14 @@
                     </td>
                     <td>
                         <span class="badge rounded-pill bg-{{ 'primary' if 'drive' in service|lower else 'info text-dark' }} bg-opacity-25 border border-{{ 'primary' if 'drive' in service|lower else 'info' }} border-opacity-25">
-                            <i class="bi bi-{{ 'google' if 'drive' in service|lower else 'dropbox' }} me-1"></i> {{ service.upper() }}
+                            {% if 'onedrive' in service|lower %}
+                                <i class="bi bi-microsoft me-1"></i>
+                            {% elif 'drive' in service|lower %}
+                                <i class="bi bi-google me-1"></i>
+                            {% else %}
+                                <i class="bi bi-dropbox me-1"></i>
+                            {% endif %}
+                            {{ service.upper() }}
                         </span>
                     </td>
                     <td class="text-muted font-monospace" style="font-size: 0.9rem;">
