@@ -337,7 +337,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Dropbox Status check
         from src.init_services import dropbox_svc, onedrive_svc
         try:
-            dbx_status = '`ONLINE ✅`' if (dropbox_svc and dropbox_svc.client) else '`OFFLINE ❌`'
+            dbx_status = '`ONLINE ✅`' if (dropbox_svc and dropbox_svc.dbx) else '`OFFLINE ❌`'
         except:
             dbx_status = '`OFFLINE ❌`'
         texto += f"☁️ Dropbox API: {dbx_status}\n"

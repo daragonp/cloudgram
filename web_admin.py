@@ -17,7 +17,7 @@ from src.scripts.indexador import ejecutar_indexacion_completa, ejecutar_indexac
 from src.services.dropbox_service import DropboxService
 from src.services.google_drive_service import GoogleDriveService
 from src.services.onedrive_service import OneDriveService
-from src.init_services import onedrive_svc
+from src.init_services import onedrive_svc, dropbox_svc
 from src.scripts.refresh_drive_token import refresh_google_token
 
 try:
@@ -273,7 +273,15 @@ def dashboard():
         except:
             drive_status = False
         
-        dropbox_status = True  # Status base para Dropbox
+        # Dropbox Status
+        dropbox_status = False
+        if dropbox_svc and dropbox_svc.dbx:
+            try:
+                # Verificación rápida: obtener cuenta actual
+                dropbox_svc.dbx.users_get_current_account()
+                dropbox_status = True
+            except:
+                dropbox_status = False
 
         # Redis Status
         redis_status = False
@@ -1008,7 +1016,7 @@ def embed_single(file_id):
 
         t = threading.Thread(target=run_async)
         t.start()
-        t.join(timeout=60)  # máximo 60 segundos de espera
+        t.join(timeout=120)  # máximo 120 segundos de espera
 
         return _json.dumps(result), (200 if result.get("ok") else 500), {"Content-Type": "application/json"}
 

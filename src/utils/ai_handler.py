@@ -137,6 +137,8 @@ class AIHandler:
         
         # Limpieza preventiva para evitar errores de codificación
         text = text.replace('\x00', '').strip()
+        # Mantener solo caracteres imprimibles y espacios
+        text = ''.join(c for c in text if c.isprintable() or c in '\n\t ')
         if not text:
             return None
         
