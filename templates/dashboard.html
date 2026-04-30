@@ -370,25 +370,33 @@ function startCategorizer() {
 
     fetch("/run-categorizer", { method: "POST", body: formData })
         .then(res => res.json())
-        .then(() => {
-            const eventSource = new EventSource("/progress-categorizer");
-            eventSource.onmessage = function(event) {
-                const data = JSON.parse(event.data);
-                const message = data.message || String(event.data);
-                logConsole.innerHTML += `> ${message}\n`;
-                logConsole.scrollTop = logConsole.scrollHeight;
+        .then(data => {
+            // Si Celery está disponible
+            if (data.task_id) {
+                logConsole.innerHTML += `> [CELERY] Tarea enviada al worker: ${data.task_id}\n`;
+                monitorCeleryTask(data.task_id, logConsole, 
+                                  { style: { width: '50%' } }, statusText, btn);
+            } else {
+                // Thread-based: usar EventSource
+                const eventSource = new EventSource("/progress-categorizer");
+                eventSource.onmessage = function(event) {
+                    const data = JSON.parse(event.data);
+                    const message = data.message || String(event.data);
+                    logConsole.innerHTML += `> ${message}\n`;
+                    logConsole.scrollTop = logConsole.scrollHeight;
 
-                if (message.includes("FINALIZADO") || message.includes("completada")) {
+                    if (message.includes("FINALIZADO") || message.includes("completada")) {
+                        eventSource.close();
+                        statusText.innerHTML = "<span class='text-success fw-bold'><i class='bi bi-check-circle'></i> Categorización finalizada.</span>";
+                        setTimeout(() => location.reload(), 2500);
+                    }
+                };
+                eventSource.onerror = function() {
                     eventSource.close();
-                    statusText.innerHTML = "<span class='text-success fw-bold'><i class='bi bi-check-circle'></i> Categorización finalizada.</span>";
-                    setTimeout(() => location.reload(), 2500);
-                }
-            };
-            eventSource.onerror = function() {
-                eventSource.close();
-                statusText.innerHTML = "<span class='text-warning fw-bold'><i class='bi bi-exclamation-triangle'></i> Conexión perdida.</span>";
-                btn.disabled = false;
-            };
+                    statusText.innerHTML = "<span class='text-warning fw-bold'><i class='bi bi-exclamation-triangle'></i> Conexión perdida.</span>";
+                    btn.disabled = false;
+                };
+            }
         })
         .catch(err => {
             logConsole.innerHTML += `<span class='text-danger'>> [ERROR] ${err}</span>\n`;
@@ -412,28 +420,36 @@ function startIndexing() {
     formData.append('csrf_token', document.querySelector('meta[name="csrf-token"]')?.content || '');
 
     fetch("/run-indexer", { method: "POST", body: formData })
-        .then(() => {
-            const eventSource = new EventSource("/progress-indexer");
-            eventSource.onmessage = function(event) {
-                const data = String(event.data);
-                if (!isNaN(data)) {
-                    const p = parseInt(data);
-                    progressBar.style.width = p + "%";
-                } else {
-                    logConsole.innerHTML += `> ${data}\n`;
-                    logConsole.scrollTop = logConsole.scrollHeight;
-                }
+        .then(res => res.json())
+        .then(data => {
+            // Si Celery está disponible, data.task_id existirá
+            if (data.task_id) {
+                logConsole.innerHTML += `> [CELERY] Tarea enviada al worker: ${data.task_id}\n`;
+                monitorCeleryTask(data.task_id, logConsole, progressBar, statusText, btn);
+            } else {
+                // Thread-based: usar EventSource como antes
+                const eventSource = new EventSource("/progress-indexer");
+                eventSource.onmessage = function(event) {
+                    const msg = String(event.data);
+                    if (!isNaN(msg)) {
+                        const p = parseInt(msg, 10);
+                        progressBar.style.width = p + "%";
+                    } else {
+                        logConsole.innerHTML += `> ${msg}\n`;
+                        logConsole.scrollTop = logConsole.scrollHeight;
+                    }
 
-                if (data === "100" || data.includes("COMPLETADO")) {
+                    if (msg === "100" || msg.includes("COMPLETADO")) {
+                        eventSource.close();
+                        statusText.innerHTML = "<span class='text-success fw-bold'><i class='bi bi-check-circle'></i> Proceso finalizado.</span>";
+                        progressBar.style.width = "100%";
+                        setTimeout(() => location.reload(), 2500);
+                    }
+                };
+                eventSource.onerror = function() {
                     eventSource.close();
-                    statusText.innerHTML = "<span class='text-success fw-bold'><i class='bi bi-check-circle'></i> Proceso finalizado.</span>";
-                    progressBar.style.width = "100%";
-                    setTimeout(() => location.reload(), 2500);
-                }
-            };
-            eventSource.onerror = function() {
-                eventSource.close();
-            };
+                };
+            }
         })
         .catch(err => {
             logConsole.innerHTML += `<span class='text-danger'>> [ERROR] ${err}</span>\n`;
@@ -442,6 +458,42 @@ function startIndexing() {
 }
 
 let embedEventSource = null;
+
+function monitorCeleryTask(taskId, logEl, progressBar, statusEl, btn, btnStop = null) {
+    const pollInterval = setInterval(() => {
+        fetch(`/celery-task-status?task_id=${taskId}`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'PENDING' || data.status === 'RETRY') {
+                    statusEl.innerHTML = `<span class='text-info'>⏳ Esperando: ${data.status}</span>`;
+                } else if (data.status === 'PROGRESS') {
+                    const pct = data.meta?.percent || 50;
+                    progressBar.style.width = pct + '%';
+                    logEl.innerHTML += `> [CELERY] Progreso: ${pct}%\n`;
+                    logEl.scrollTop = logEl.scrollHeight;
+                } else if (data.status === 'SUCCESS') {
+                    clearInterval(pollInterval);
+                    progressBar.style.width = '100%';
+                    statusEl.innerHTML = `<span class='text-success fw-bold'><i class='bi bi-check-circle'></i> Tarea completada</span>`;
+                    logEl.innerHTML += `> [CELERY] ✅ Completada: ${data.result}\n`;
+                    logEl.scrollTop = logEl.scrollHeight;
+                    if (btn) btn.disabled = false;
+                    if (btnStop) btnStop.disabled = true;
+                    setTimeout(() => location.reload(), 3000);
+                } else if (data.status === 'FAILURE') {
+                    clearInterval(pollInterval);
+                    statusEl.innerHTML = `<span class='text-danger fw-bold'><i class='bi bi-x-circle'></i> Error: ${data.result}</span>`;
+                    logEl.innerHTML += `> [CELERY] ❌ Error: ${data.result}\n`;
+                    if (btn) btn.disabled = false;
+                    if (btnStop) btnStop.disabled = true;
+                }
+            })
+            .catch(err => {
+                logEl.innerHTML += `> [ERROR] No se pudo verificar estado Celery: ${err}\n`;
+                clearInterval(pollInterval);
+            });
+    }, 2000); // Verificar cada 2 segundos
+}
 
 function startEmbeddings() {
     const btn = document.getElementById('btnEmbeddings');
@@ -475,37 +527,45 @@ function startEmbeddings() {
 
     fetch('/run-embeddings', { method: 'POST', body: formData })
         .then(res => res.json())
-        .then(() => {
-            embedEventSource = new EventSource('/progress-embeddings');
-            embedEventSource.onmessage = function(event) {
-                const data = JSON.parse(event.data);
-                const msg = data.message || '';
-                
-                logEl.innerHTML += `> ${msg}\n`;
-                logEl.scrollTop = logEl.scrollHeight;
-                
-                // Contar éxitos y errores desde los mensajes
-                if (msg.includes('Embedding guardado')) procesados++;
-                if (msg.includes('Error en') || msg.includes('error_limit') || msg.includes('🚨')) errores++;
-                document.getElementById('embedContador').textContent = procesados;
-                document.getElementById('embedErrores').textContent = errores;
+        .then(data => {
+            // Si Celery está disponible
+            if (data.task_id) {
+                logEl.innerHTML += `> [CELERY] Tarea enviada al worker: ${data.task_id}\n`;
+                monitorCeleryTask(data.task_id, logEl, document.getElementById('embedProgressBar'), 
+                                  document.getElementById('embedStatus'), btn, btnStop);
+            } else {
+                // Thread-based: usar EventSource
+                embedEventSource = new EventSource('/progress-embeddings');
+                embedEventSource.onmessage = function(event) {
+                    const msgData = JSON.parse(event.data);
+                    const msg = msgData.message || '';
+                    
+                    logEl.innerHTML += `> ${msg}\n`;
+                    logEl.scrollTop = logEl.scrollHeight;
+                    
+                    // Contar éxitos y errores desde los mensajes
+                    if (msg.includes('Embedding guardado')) procesados++;
+                    if (msg.includes('Error en') || msg.includes('error_limit') || msg.includes('🚨')) errores++;
+                    document.getElementById('embedContador').textContent = procesados;
+                    document.getElementById('embedErrores').textContent = errores;
 
-                if (msg.includes('FINALIZADO') || msg.includes('Finalizado') || msg.includes('Completado') || msg.includes('Detenido')) {
+                    if (msg.includes('FINALIZADO') || msg.includes('Finalizado') || msg.includes('Completado') || msg.includes('Detenido')) {
+                        if (embedEventSource) embedEventSource.close();
+                        document.getElementById('embedProgressBar').style.width = '100%';
+                        document.getElementById('embedProgressBar').classList.remove('progress-bar-animated');
+                        document.getElementById('embedStatus').innerHTML = `<span class='text-success fw-bold'><i class='bi bi-check-circle'></i> ${msg}</span>`;
+                        btn.disabled = false;
+                        if (btnStop) btnStop.disabled = true;
+                        setTimeout(() => location.reload(), 3000);
+                    }
+                };
+                embedEventSource.onerror = function() {
                     if (embedEventSource) embedEventSource.close();
-                    document.getElementById('embedProgressBar').style.width = '100%';
-                    document.getElementById('embedProgressBar').classList.remove('progress-bar-animated');
-                    document.getElementById('embedStatus').innerHTML = `<span class='text-success fw-bold'><i class='bi bi-check-circle'></i> ${msg}</span>`;
+                    document.getElementById('embedStatus').innerHTML = "<span class='text-warning fw-bold'><i class='bi bi-exclamation-triangle'></i> Conexión perdida o proceso terminado.</span>";
                     btn.disabled = false;
                     if (btnStop) btnStop.disabled = true;
-                    setTimeout(() => location.reload(), 3000);
-                }
-            };
-            embedEventSource.onerror = function() {
-                if (embedEventSource) embedEventSource.close();
-                document.getElementById('embedStatus').innerHTML = "<span class='text-warning fw-bold'><i class='bi bi-exclamation-triangle'></i> Conexión perdida o proceso terminado.</span>";
-                btn.disabled = false;
-                if (btnStop) btnStop.disabled = true;
-            };
+                };
+            }
         })
         .catch(err => {
             logEl.innerHTML += `<span class='text-danger'>> [ERROR] ${err}</span>\n`;

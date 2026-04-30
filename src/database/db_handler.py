@@ -104,6 +104,7 @@ class DatabaseHandler:
                         embedding TEXT,
                         summary TEXT,
                         technical_description TEXT,
+                        tags TEXT,
                         folder_id INTEGER REFERENCES folders(id),
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         CONSTRAINT unique_file_per_service UNIQUE (name, service)
@@ -142,6 +143,7 @@ class DatabaseHandler:
                 try:
                     cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS summary TEXT")
                     cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS technical_description TEXT")
+                    cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS tags TEXT")
                     cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS folder_id INTEGER")
                 except: pass
 
@@ -245,7 +247,7 @@ class DatabaseHandler:
     
     # --- FUNCIONES DEL BOT ---
     
-    def register_file(self, telegram_id, name, f_type, cloud_url, service, content_text=None, embedding=None, folder_id=None, summary=None, technical_description=None):
+    def register_file(self, telegram_id, name, f_type, cloud_url, service, content_text=None, embedding=None, folder_id=None, summary=None, technical_description=None, tags=None):
         """Registro con ON CONFLICT corregido."""
         try:
             # Convertir embedding a string JSON si es una lista/array
@@ -257,20 +259,21 @@ class DatabaseHandler:
                     cur.execute("""
                         INSERT INTO files (
                             telegram_id, name, type, cloud_url, service, 
-                            content_text, embedding, folder_id, summary, technical_description
+                            content_text, embedding, folder_id, summary, technical_description, tags
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (name, service) 
                         DO UPDATE SET 
-                            summary = EXCLUDED.summary,
-                            technical_description = EXCLUDED.technical_description,
+                            summary = COALESCE(EXCLUDED.summary, files.summary),
+                            technical_description = COALESCE(EXCLUDED.technical_description, files.technical_description),
+                            tags = COALESCE(EXCLUDED.tags, files.tags),
                             embedding = COALESCE(EXCLUDED.embedding, files.embedding),
                             content_text = COALESCE(EXCLUDED.content_text, files.content_text),
                             cloud_url = EXCLUDED.cloud_url,
                             telegram_id = EXCLUDED.telegram_id
                     """, (
                         telegram_id, name, f_type, cloud_url, service, 
-                        content_text, embedding, folder_id, summary, technical_description
+                        content_text, embedding, folder_id, summary, technical_description, tags
                     ))
                     conn.commit()
                     print(f"✅ DB: Archivo '{name}' registrado/actualizado.")
@@ -283,62 +286,68 @@ class DatabaseHandler:
                 with conn.cursor() as cur:
                     # Traemos los nuevos campos para el Bot
                     query = """
-                    SELECT id, name, cloud_url, service, summary, technical_description 
+                    SELECT id, name, cloud_url, service, summary, technical_description, tags 
                     FROM files 
                     WHERE name ILIKE %s 
                     OR type ILIKE %s 
                     OR technical_description ILIKE %s
+                    OR tags ILIKE %s
                     LIMIT 1000
                     """
                     like_keyword = f'%{keyword}%'
-                    cur.execute(query, (like_keyword, like_keyword, like_keyword))
+                    cur.execute(query, (like_keyword, like_keyword, like_keyword, like_keyword))
                     return cur.fetchall()
         except Exception as e:
             print(f"❌ Error en search_by_name: {e}")
             return []
         
     def search_semantic(self, query_embedding, limit=5, file_types=None):
-        """Búsqueda vectorial con cálculo de similitud y soporte de filtros de tipo de archivo."""
+        """Búsqueda vectorial con cálculo de similitud y soporte de filtros de tipo de archivo (nativo con pgvector)."""
         try:
             with self._connect() as conn:
-                with conn.cursor() as cur:
-                    query = 'SELECT id, name, cloud_url, embedding, summary, service FROM files WHERE embedding IS NOT NULL'
-                    params = []
+                # Usamos RealDictCursor
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    query_vec_str = json.dumps(query_embedding.tolist() if isinstance(query_embedding, np.ndarray) else query_embedding)
+                    
+                    query = '''
+                        SELECT id, name, cloud_url, summary, service, tags,
+                               1 - (embedding <=> %s::vector) AS similarity 
+                        FROM files 
+                        WHERE embedding IS NOT NULL
+                    '''
+                    params = [query_vec_str]
                     
                     if file_types and isinstance(file_types, list) and len(file_types) > 0:
                         type_conditions = []
                         for ft in file_types:
                             ft_clean = ft.replace('.', '').strip().lower()
-                            type_conditions.append(f"name ILIKE %s OR type ILIKE %s")
+                            type_conditions.append("name ILIKE %s OR type ILIKE %s")
                             params.extend([f"%.{ft_clean}%", f"%{ft_clean}%"])
                             
                         if type_conditions:
                             query += f" AND ({' OR '.join(type_conditions)})"
                             
-                    cur.execute(query, tuple(params) if params else None)
-                    all_files = cur.fetchall()
-                
-                results = []
-                q_vec = np.array(query_embedding)
-
-                for f_id, name, url, f_emb_json, summary, service in all_files:
-                    try:
-                        if not f_emb_json: continue
-                        f_vec = np.array(json.loads(f_emb_json) if isinstance(f_emb_json, str) else f_emb_json)
-                        
-                        norm = (np.linalg.norm(q_vec) * np.linalg.norm(f_vec))
-                        similarity = np.dot(q_vec, f_vec) / norm if norm > 0 else 0
-                        
-                        results.append({
-                            "id": f_id, "name": name, "url": url, 
-                            "similarity": float(similarity), "summary": summary, "service": service
+                    query += f" ORDER BY embedding <=> %s::vector LIMIT {int(limit)}"
+                    params.append(query_vec_str)
+                    
+                    cur.execute(query, tuple(params))
+                    results = cur.fetchall()
+                    
+                    formatted_results = []
+                    for r in results:
+                        formatted_results.append({
+                            "id": r['id'],
+                            "name": r['name'],
+                            "url": r['cloud_url'],
+                            "similarity": float(r['similarity']) if r['similarity'] is not None else 0.0,
+                            "summary": r['summary'],
+                            "service": r['service'],
+                            "tags": r.get('tags')
                         })
-                    except: continue
-                
-                results.sort(key=lambda x: x["similarity"], reverse=True)
-                return results[:limit]
+                    
+                    return formatted_results
         except Exception as e:
-            print(f"❌ Error semántico: {e}")
+            print(f"❌ Error semántico pgvector: {e}")
             return []
 
     def get_last_files(self, limit=20):
@@ -349,9 +358,12 @@ class DatabaseHandler:
 
     def get_file_by_id(self, file_id):
         with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT id, name, service, cloud_url FROM files WHERE id = %s", (file_id,))
-                return cur.fetchone() # Esto devolverá un diccionario gracias al RealDictCursor
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT id, telegram_id, user_id, name, type, cloud_url, service, content_text, embedding, summary, technical_description, tags, folder_id, created_at FROM files WHERE id = %s",
+                    (file_id,)
+                )
+                return cur.fetchone()
     # --- IA Y WEB ---
     
     def get_user_by_email(self, email):
@@ -371,20 +383,18 @@ class DatabaseHandler:
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute('''
-                    SELECT id, name, cloud_url, service, content_text, embedding 
+                    SELECT id, name, cloud_url, service, content_text, embedding::text AS embedding 
                     FROM files 
                     WHERE embedding IS NOT NULL 
-                    AND embedding NOT IN ('', '[]', 'error_limit')
                 ''')
                 rows = cur.fetchall()
                 return [(r['id'], r['name'], r['cloud_url'], r['service'], r['content_text'], r['embedding']) 
                         for r in rows]
     
     def reset_failed_embeddings(self):
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("UPDATE files SET embedding = NULL WHERE embedding IN ('error_limit', '[]')")
-            conn.commit()
+        # En pgvector, los fallos son representados con NULL ahora (ya limpiamos error_limit antes)
+        # Si tienes algún otro valor por default que representa error, modifícalo aquí
+        pass
 
     def reset_all_embeddings(self):
         """Reinicia TODOS los archivos (borra resúmenes y embeddings) para un recálculo desde cero."""
@@ -414,7 +424,6 @@ class DatabaseHandler:
                         SELECT id, name, service, cloud_url, content_text, type
                         FROM files
                         WHERE embedding IS NULL
-                           OR embedding IN ('', '[]', 'error_limit')
                         ORDER BY created_at DESC
                         LIMIT %s OFFSET %s
                     """, (limit, offset))
@@ -431,15 +440,14 @@ class DatabaseHandler:
                     cur.execute("""
                         SELECT COUNT(*) FROM files
                         WHERE embedding IS NULL
-                           OR embedding IN ('', '[]', 'error_limit')
                     """)
                     return cur.fetchone()[0]
         except Exception as e:
             print(f"❌ Error en count_files_without_embedding: {e}")
             return 0
 
-    def update_file_embedding(self, file_id, embedding, summary=None, content_text=None):
-        """Actualiza embedding, summary y content_text de un archivo ya registrado.
+    def update_file_embedding(self, file_id, embedding, summary=None, content_text=None, tags=None):
+        """Actualiza embedding, summary, content_text y tags de un archivo ya registrado.
         
         Se usa después de re-indexar un archivo desde el bot sin necesidad de re-subirlo.
         Solo actualiza los campos que se pasen como no-None.
@@ -449,6 +457,7 @@ class DatabaseHandler:
             embedding: Lista/array con el vector de embedding
             summary: Resumen del contenido (opcional)
             content_text: Texto extraído del archivo (opcional)
+            tags: Etiquetas generadas por IA (opcional)
         """
         try:
             emb_json = json.dumps(
@@ -461,9 +470,10 @@ class DatabaseHandler:
                         UPDATE files
                         SET embedding = %s,
                             summary = COALESCE(%s, summary),
-                            content_text = COALESCE(%s, content_text)
+                            content_text = COALESCE(%s, content_text),
+                            tags = COALESCE(%s, tags)
                         WHERE id = %s
-                    """, (emb_json, summary, content_text, file_id))
+                    """, (emb_json, summary, content_text, tags, file_id))
                 conn.commit()
             print(f"✅ DB: Embedding actualizado para archivo ID={file_id}")
             return True

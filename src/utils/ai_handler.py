@@ -368,6 +368,79 @@ class AIHandler:
         return text.replace('\x00', '').strip()
     
     @staticmethod
+    @staticmethod
+    def _parse_json_response(content):
+        content = content.strip()
+        try:
+            return json.loads(content)
+        except Exception:
+            # Intentar limpiar texto no válido y convertirlo a JSON simple
+            try:
+                snippet = content[content.index('{'):content.rindex('}')+1]
+                return json.loads(snippet)
+            except Exception:
+                return None
+
+    @staticmethod
+    async def generate_summary_with_tags(text):
+        """
+        Genera un resumen y hashtags relevantes en JSON.
+
+        Returns:
+            dict: {'summary': str, 'tags': list[str]}
+        """
+        if not text or len(text.strip()) < 10:
+            return {'summary': 'Sin contenido para resumir.', 'tags': []}
+
+        prompt = (
+            "Eres un archivista experto. Resume el siguiente texto en máximo 2 frases cortas en español. "
+            "Luego genera entre 3 y 5 hashtags relevantes en español, sin símbolos extras, sin emojis y en formato de lista JSON. "
+            "Responde únicamente en JSON con las claves 'summary' y 'tags'."
+        )
+
+        try:
+            client = AIHandler._get_openai_client()
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": text[:5000]}
+                ],
+                max_tokens=200
+            )
+            raw = response.choices[0].message.content.strip()
+            parsed = AIHandler._parse_json_response(raw)
+            if parsed and isinstance(parsed, dict):
+                summary = parsed.get('summary', '').strip()
+                tags = parsed.get('tags', [])
+                if isinstance(tags, str):
+                    tags = [t.strip('# ').strip() for t in tags.split(',') if t.strip()]
+                if not isinstance(tags, list):
+                    tags = []
+                logger.info("✅ Resumen + tags generado con gpt-4o-mini")
+                return {
+                    'summary': summary or 'Resumen no disponible.',
+                    'tags': [t for t in tags if t]
+                }
+
+            # Fallback si el modelo no devuelve JSON válido
+            hashtags = re.findall(r"#([A-Za-zÁÉÍÓÚáéíóúÑñ0-9_]+)", raw)
+            return {
+                'summary': raw.split('Tags:')[0].strip()[:400],
+                'tags': hashtags[:5]
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            if "429" in error_msg or "quota" in error_msg.lower() or "rate_limit" in error_msg.lower():
+                retry = AIHandler._parse_retry_after(error_msg)
+                wait_msg = f" (Reintenta en {retry}s)" if retry else ""
+                logger.error(f"🚨 Cuota de OpenAI agotada en Resumen: {error_msg}")
+                raise QuotaExceededError(f"Cuota de OpenAI agotada en Resumen{wait_msg}", retry_after=retry)
+            logger.error(f"❌ Error generando resumen con tags (OpenAI): {e}")
+            return {'summary': 'Resumen no disponible.', 'tags': []}
+
+    @staticmethod
     async def generate_summary(text):
         """
         Genera un resumen ejecutivo del texto usando GPT-4o-mini (OpenAI).
@@ -378,38 +451,41 @@ class AIHandler:
         Returns:
             str: Resumen del texto (máximo 2 frases)
         """
-        if not text or len(text.strip()) < 10:
-            return "Sin contenido para resumir."
+        result = await AIHandler.generate_summary_with_tags(text)
+        return result.get('summary', 'Resumen no disponible.')
 
+    @staticmethod
+    async def answer_document_question(file_name, question, content_text):
+        """Responde preguntas específicas sobre un documento ya indexado."""
+        if not question:
+            return "❌ No se recibió ninguna pregunta."
+
+        prompt = (
+            "Eres un asistente experto en documentos. Te entregaré el nombre del documento y el texto extraído del mismo. "
+            "Responde en español, usando solamente la información del texto proporcionado. Si no conoces la respuesta, di claramente que no está en el documento. "
+            "Evita inventar datos y responde en un solo mensaje conciso."
+        )
+        text_to_use = content_text[:12000]
         try:
             client = AIHandler._get_openai_client()
             response = await client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {
-                        "role": "system",
-                        "content": "Eres un archivista experto. Resume el siguiente texto en máximo 2 frases cortas que describan de qué trata el documento. Responde en español."
-                    },
-                    {
-                        "role": "user",
-                        "content": text[:4000]
-                    }
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": f"Documento: {file_name}\n\nTexto:\n{text_to_use}\n\nPregunta: {question}"}
                 ],
-                max_tokens=150
+                max_tokens=400
             )
-            result = response.choices[0].message.content.strip()
-            logger.info("✅ Resumen generado con gpt-4o-mini")
-            return result
-
+            answer = response.choices[0].message.content.strip()
+            logger.info("✅ Respuesta de documento generada con gpt-4o-mini")
+            return answer
         except Exception as e:
             error_msg = str(e)
             if "429" in error_msg or "quota" in error_msg.lower() or "rate_limit" in error_msg.lower():
                 retry = AIHandler._parse_retry_after(error_msg)
-                wait_msg = f" (Reintenta en {retry}s)" if retry else ""
-                logger.error(f"🚨 Cuota de OpenAI agotada en Resumen: {error_msg}")
-                raise QuotaExceededError(f"Cuota de OpenAI agotada en Resumen{wait_msg}", retry_after=retry)
-            logger.error(f"❌ Error generando resumen (OpenAI): {e}")
-            return "Resumen no disponible."
+                raise QuotaExceededError(f"Cuota de OpenAI agotada{(' (Reintenta en '+retry+'s)' if retry else '')}", retry_after=retry)
+            logger.error(f"❌ Error respondiendo pregunta de documento: {e}")
+            return "No pude responder esa pregunta en este momento."
 
     @staticmethod
     async def test_connection():

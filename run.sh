@@ -29,5 +29,14 @@ echo "🌐 Iniciando Web Admin (Flask)..."
 gunicorn app:app &
 WEB_PID=$!
 
+echo "🐴 Iniciando worker de Celery si Redis está configurado..."
+if [ -n "$REDIS_URL" ] || [ -n "$REDIS_BROKER_URL" ] || [ -n "$REDIS_URI" ]; then
+    celery -A celery_app.celery worker --loglevel=info &
+    WORKER_PID=$!
+    echo "   Worker Celery iniciado (PID: $WORKER_PID)."
+else
+    echo "   REDIS no configurado, worker Celery no iniciado."
+fi
+
 # Esperamos a que ambos procesos terminen
 wait

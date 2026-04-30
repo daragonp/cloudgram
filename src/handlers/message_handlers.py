@@ -4,6 +4,9 @@ import asyncio
 import ssl
 import certifi
 import random
+import shutil
+import zipfile
+import tempfile
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -53,6 +56,11 @@ FILE_CATEGORIES = {
     }
 }
 
+SUPPORTED_ZIP_EXTENSIONS = {
+    'pdf', 'docx', 'txt', 'jpg', 'jpeg', 'png', 'webp', 'gif',
+    'ogg', 'mp3', 'wav', 'mp4', 'm4a', 'opus', 'flac', 'webm'
+}
+
 def get_file_category(file_name: str) -> str:
     """
     Determina la categoría de carpeta para un archivo según su extensión.
@@ -66,6 +74,70 @@ def get_file_category(file_name: str) -> str:
         if ext in data['extensions']:
             return category
     return None
+
+async def _process_zip_contents(local_zip_path, zip_name, cloud_url, service, telegram_id, folder_id):
+    if not zipfile.is_zipfile(local_zip_path):
+        return 0
+
+    extract_dir = tempfile.mkdtemp(prefix="zip_extract_", dir="descargas")
+    processed = 0
+    try:
+        with zipfile.ZipFile(local_zip_path, 'r') as archive:
+            for member in archive.infolist():
+                if member.is_dir():
+                    continue
+                dest_path = os.path.normpath(os.path.join(extract_dir, member.filename))
+                if not dest_path.startswith(os.path.abspath(extract_dir)):
+                    continue
+                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                with archive.open(member) as source, open(dest_path, 'wb') as target:
+                    target.write(source.read())
+
+        for root, _, files in os.walk(extract_dir):
+            for file_name in files:
+                ext = file_name.rsplit('.', 1)[-1].lower() if '.' in file_name else ''
+                if ext not in SUPPORTED_ZIP_EXTENSIONS:
+                    continue
+
+                file_path = os.path.join(root, file_name)
+                texto = await AIHandler.extract_text(file_path)
+                if not texto or not texto.strip():
+                    continue
+
+                vector = await AIHandler.get_embedding(texto)
+                if not vector:
+                    continue
+
+                summary_data = await AIHandler.generate_summary_with_tags(texto)
+                tags = ",".join(summary_data.get('tags', [])) if summary_data.get('tags') else None
+                internal_name = f"{zip_name} > {os.path.relpath(file_path, extract_dir).replace('\\', '/')}"
+
+                db.register_file(
+                    telegram_id=telegram_id,
+                    name=internal_name,
+                    f_type=ext,
+                    cloud_url=cloud_url,
+                    service=service,
+                    content_text=texto,
+                    embedding=vector,
+                    folder_id=folder_id,
+                    summary=summary_data.get('summary'),
+                    technical_description=f"Archivo dentro de ZIP {zip_name}",
+                    tags=tags
+                )
+                processed += 1
+    except QuotaExceededError:
+        print("⚠️ Cuota de IA agotada mientras se procesaba un ZIP interno.")
+    except Exception as e:
+        print(f"❌ Error procesando ZIP interno: {e}")
+    finally:
+        try:
+            if os.path.exists(extract_dir):
+                shutil.rmtree(extract_dir)
+        except Exception:
+            pass
+
+    return processed
 
 if not os.path.exists("descargas"):
     os.makedirs("descargas")
@@ -209,7 +281,16 @@ async def handle_any_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     embedding=vector,
                     folder_id=folder_id
                 )
-                await msg.edit_text(f"✅ *Guardado:* `{file_name}`\n🔗 [Ver en la nube]({url})", parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+
+                file_message = f"✅ *Guardado:* `{file_name}`\n🔗 [Ver en la nube]({url})"
+                if file_name.lower().endswith('.zip'):
+                    processed = await _process_zip_contents(local_path, file_name, url, svc_name, update.effective_user.id, folder_id)
+                    if processed:
+                        file_message += f"\n📦 *ZIP procesado:* se indexaron {processed} archivos internos."
+                    else:
+                        file_message += "\n📦 El ZIP se guardó, pero no se encontraron archivos internos compatibles para indexar."
+
+                await msg.edit_text(file_message, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
             else:
                 await msg.edit_text("❌ Error al subir a la nube.")
 

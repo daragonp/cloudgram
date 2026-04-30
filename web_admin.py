@@ -20,6 +20,36 @@ from src.services.onedrive_service import OneDriveService
 from src.init_services import onedrive_svc
 from src.scripts.refresh_drive_token import refresh_google_token
 
+try:
+    from celery_app import celery as celery_app
+    celery_available = True
+except Exception:
+    celery_app = None
+    celery_available = False
+
+
+def get_celery_app():
+    global celery_app, celery_available
+    if celery_app:
+        return celery_app
+    try:
+        from celery_app import celery as celery_app_local
+        celery_app = celery_app_local
+        celery_available = True
+        return celery_app
+    except Exception:
+        celery_app = None
+        celery_available = False
+        return None
+
+
+def get_celery_task_status(task_id):
+    celery = get_celery_app()
+    if not celery or not task_id:
+        return None
+    from celery.result import AsyncResult
+    return AsyncResult(task_id, app=celery)
+
 # --- AUTH LIBRARIES ---
 import dropbox
 from google_auth_oauthlib.flow import Flow
@@ -349,6 +379,11 @@ def clean_corrupted():
 @app.route('/run-indexer', methods=['POST'])
 @login_required
 def run_indexer_endpoint():
+    celery = get_celery_app()
+    if celery:
+        task = celery.send_task('celery_app.run_full_indexer')
+        return {"status": "success", "backend": "celery", "task_id": task.id}, 200
+
     def thread_wrapper():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -358,7 +393,21 @@ def run_indexer_endpoint():
             loop.close()
 
     threading.Thread(target=thread_wrapper, daemon=True).start()
-    return {"status": "success"}, 200
+    return {"status": "success", "backend": "thread"}, 200
+
+@app.route('/celery-task-status')
+@login_required
+def celery_task_status():
+    task_id = request.args.get('task_id', '')
+    task = get_celery_task_status(task_id)
+    if not task:
+        return jsonify({"status": "error", "message": "No se encontró Celery o task_id inválido."}), 400
+    return jsonify({
+        "task_id": task_id,
+        "status": task.status,
+        "result": task.result,
+        "meta": task.info,
+    })
 
 @app.route('/run-categorizer', methods=['POST'])
 @login_required
@@ -458,6 +507,11 @@ def run_embeddings_endpoint():
     except (ValueError, TypeError):
         limite = 10
 
+    celery = get_celery_app()
+    if celery:
+        task = celery.send_task('celery_app.generate_embeddings', args=[limite])
+        return {"status": "success", "backend": "celery", "task_id": task.id}, 200
+
     if not hasattr(app, 'embed_queue'):
         app.embed_queue = None
 
@@ -492,7 +546,7 @@ def run_embeddings_endpoint():
 
     threading.Thread(target=thread_wrapper, daemon=True).start()
     app.stop_embeddings = False  # Resetear flag de parada al iniciar
-    return {"status": "success", "limite": limite}, 200
+    return {"status": "success", "backend": "thread", "limite": limite}, 200
 
 @app.route('/stop-embeddings', methods=['POST'])
 @login_required

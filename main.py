@@ -5,6 +5,7 @@ import logging
 import warnings
 import platform
 import sys
+import time
 import shutil 
 import numpy as np
 from datetime import datetime
@@ -22,12 +23,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultArticle, InputTextMessageContent, BotCommand
 from telegram.ext import (
     ApplicationBuilder, 
     CommandHandler, 
     MessageHandler, 
     CallbackQueryHandler, 
+    InlineQueryHandler,
     filters,
     ContextTypes,
     TypeHandler
@@ -51,6 +53,23 @@ CATEGORY_FOLDER_CACHE = {
     'drive': {},     # category_name -> folder_id
     'onedrive': {}   # category_name -> folder_id (OneDrive)
 }
+
+# ================================================================================================
+# RATE LIMITING DE COMANDOS TELEGRAM
+# ================================================================================================
+RATE_LIMIT_WINDOW_SECONDS = 30
+RATE_LIMIT_STATE = {}
+
+def is_rate_limited(user_id: int, command_name: str):
+    if not user_id or not command_name:
+        return False, 0
+    key = f"{user_id}:{command_name}"
+    now = time.time()
+    last_ts = RATE_LIMIT_STATE.get(key, 0)
+    if now - last_ts < RATE_LIMIT_WINDOW_SECONDS:
+        return True, int(RATE_LIMIT_WINDOW_SECONDS - (now - last_ts))
+    RATE_LIMIT_STATE[key] = now
+    return False, 0
 
 # ================================================================================================
 # INICIALIZACIÓN DE CARPETAS POR CATEGORÍA
@@ -251,6 +270,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /listar - Mostrar archivos recientes\n"
         "• /buscar <texto> - Buscar por nombre\n"
         "• /buscar_ia <consulta> - Búsqueda semántica (IA)\n"
+        "• /preguntar <ID> <pregunta> - Pregunta sobre un documento ya indexado\n"
         "• /indexar - Generar embeddings pendientes\n"
         "• /eliminar <texto> - Eliminar archivos por nombre\n"
         "• /cancelar - Cancelar acciones en curso\n\n"
@@ -351,6 +371,45 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
          db.log_event("ERROR", "BOT", f"Error en /stats: {e}")
          await update.message.reply_text(f"❌ Error al consultar estadísticas: {e}")
 
+async def ask_document_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args or len(context.args) < 2:
+        return await update.message.reply_text(
+            "🔎 Uso: /preguntar <ID> <pregunta>\nEjemplo: /preguntar 42 ¿Cuál es la fecha de este documento?"
+        )
+
+    try:
+        file_id = int(context.args[0])
+    except ValueError:
+        return await update.message.reply_text("❌ El ID debe ser un número válido.")
+
+    is_limited, wait = is_rate_limited(update.effective_user.id, 'preguntar')
+    if is_limited:
+        return await update.message.reply_text(f"⏳ Por favor espera {wait}s antes de volver a usar /preguntar.")
+
+    question = " ".join(context.args[1:]).strip()
+    if not question:
+        return await update.message.reply_text("❌ Escribe una pregunta después del ID.")
+
+    archivo = db.get_file_by_id(file_id)
+    if not archivo:
+        return await update.message.reply_text(f"❌ No encontré el archivo con ID {file_id}.")
+
+    content_text = archivo.get('content_text') if isinstance(archivo, dict) else None
+    if not content_text or not content_text.strip():
+        return await update.message.reply_text(
+            "❌ Este archivo no tiene texto indexado aún. Usa /indexar o sube el archivo de nuevo para generar el texto y embeddings."
+        )
+
+    await update.message.reply_text("🤖 Consultando el documento en la base de datos... esto puede tardar unos segundos.")
+    try:
+        document_name = archivo.get('name') if isinstance(archivo, dict) else archivo[3]
+        answer = await AIHandler.answer_document_question(document_name, question, content_text)
+        await update.message.reply_text(answer, parse_mode=ParseMode.MARKDOWN)
+    except QuotaExceededError:
+        await update.message.reply_text(f"🚨 Cuota de IA agotada. Intenta de nuevo en unos instantes.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error procesando la pregunta: {e}")
+
 async def unknown_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Maneja comandos no reconocidos y muestra la ayuda al usuario."""
     try:
@@ -373,16 +432,26 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     normalized = []
     seen = set()
-    for fid, name, url, service, summary, tech in raw:
+    for row in raw:
+        fid = row[0]
+        name = row[1]
+        url = row[2]
+        service = row[3]
+        summary = row[4]
+        tech = row[5]
+        tags = row[6] if len(row) > 6 else None
         if name in seen:
             continue
         seen.add(name)
+        summary_text = summary or (tech or 'Archivo')
+        if tags:
+            summary_text = f"{summary_text} | Tags: {tags}"
         normalized.append({
             'id': fid,
             'name': name,
             'url': url,
             'service': service,
-            'summary': summary or (tech or 'Archivo')
+            'summary': summary_text
         })
 
     user_data['name_search_results'] = normalized
@@ -390,6 +459,45 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data['name_items_per_page'] = 3 if len(normalized) > 3 else 1
 
     await send_name_search_page(update, context)
+
+async def inline_search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query_text = update.inline_query.query.strip() if update.inline_query else ""
+    if not query_text:
+        return await update.inline_query.answer([], cache_time=1, is_personal=True)
+
+    try:
+        query_vector = await AIHandler.get_embedding(query_text)
+        if not query_vector:
+            return await update.inline_query.answer([], cache_time=1, is_personal=True)
+
+        raw_results = db.search_semantic(query_vector, limit=5)
+        if not raw_results:
+            raw_results = db.search_by_name(query_text)[:5]
+
+        results = []
+        for item in raw_results[:8]:
+            title = item['name'] if isinstance(item, dict) else item[1]
+            description = item.get('summary') if isinstance(item, dict) else (item[4] if len(item) > 4 else '')
+            tags = item.get('tags') if isinstance(item, dict) else None
+            if tags:
+                description = f"{description or ''} | Tags: {tags}"
+            url = item['url'] if isinstance(item, dict) else item[2]
+            text = f"*{title}*\n{description}\n{url}"
+            results.append(
+                InlineQueryResultArticle(
+                    id=str(item['id']) if isinstance(item, dict) else str(item[0]),
+                    title=title,
+                    input_message_content=InputTextMessageContent(text, parse_mode=ParseMode.MARKDOWN),
+                    description=(description or '').strip()[:95]
+                )
+            )
+
+        await update.inline_query.answer(results, cache_time=1, is_personal=True)
+    except QuotaExceededError:
+        await update.inline_query.answer([], cache_time=1, is_personal=True)
+    except Exception as e:
+        print(f"❌ Error en inline_search_handler: {e}")
+        await update.inline_query.answer([], cache_time=1, is_personal=True)
 
 async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = context.user_data
@@ -1030,6 +1138,10 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         return await update.message.reply_text("🔎 *Uso:* `/buscar_ia concepto`", parse_mode=ParseMode.MARKDOWN)
     
+    is_limited, wait = is_rate_limited(update.effective_user.id, 'buscar_ia')
+    if is_limited:
+        return await update.message.reply_text(f"⏳ Por favor espera {wait}s antes de volver a usar /buscar_ia.")
+
     query_text = " ".join(context.args)
     msg = await update.message.reply_text("🤖 Consultando mi base neuronal con OpenAI...")
     
@@ -1082,12 +1194,16 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if name in seen_names:
                     continue
                 seen_names.add(name)
+                summary_text = res.get('summary') or 'Sin resumen disponible.'
+                if res.get('tags'):
+                    summary_text += f" | Tags: {res.get('tags')}"
                 normalized.append({
                     'id': res.get('id'),
                     'name': name,
                     'url': res.get('url'),
                     'service': res.get('service'),
-                    'summary': res.get('summary') or 'Sin resumen disponible.',
+                    'summary': summary_text,
+                    'tags': res.get('tags'),
                     'score': res.get('similarity', None)
                 })
 
@@ -1223,6 +1339,8 @@ async def send_search_page(update, context, edit=False):
         text += f"{num_emoji} {separator}\n"
         text += f"📄 *{item['name']}*{score}\n"
         text += f"📝 _{item.get('summary','')}_\n"
+        if item.get('tags'):
+            text += f"🏷️ *Tags:* {item.get('tags')}\n"
         if item.get('url'):
             text += f"🔗 *Enlace:* [Ver en la nube]({item['url']})\n"
         text += "\n"
@@ -1305,6 +1423,7 @@ async def post_init(application):
         BotCommand("start", "🏠 Menú Principal"),
         BotCommand("stats", "📊 Estadísticas"),
         BotCommand("buscar_ia", "🤖 Búsqueda Inteligente"),
+        BotCommand("preguntar", "❓ Consulta un documento por ID"),
         BotCommand("indexar", "⚡ Indexar archivos pendientes"),
         BotCommand("listar", "📋 Recientes"),
         BotCommand("buscar", "🔎 Buscar por nombre"),
@@ -1341,11 +1460,13 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("listar", list_files_command))
     app.add_handler(CommandHandler("buscar", search_command))
     app.add_handler(CommandHandler("buscar_ia", search_ia_command))
+    app.add_handler(CommandHandler("preguntar", ask_document_command))
     app.add_handler(CommandHandler("indexar", indexar_command))
     app.add_handler(CommandHandler("eliminar", delete_command))
     app.add_handler(CommandHandler("ayuda", help_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(voice_options_callback, pattern="^voice_"))
+    app.add_handler(InlineQueryHandler(inline_search_handler))
     app.add_handler(CommandHandler(["cancelar", "salir", "stop"], cancelar_handler))
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command_handler))
         
