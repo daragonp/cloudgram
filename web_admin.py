@@ -886,7 +886,7 @@ def archivos_errores():
                 cur.execute("""
                     SELECT id, name, cloud_url, service, created_at, content_text
                     FROM files
-                    WHERE embedding IS NULL
+                    WHERE embedding IS NULL AND summary IS NULL
                     ORDER BY created_at DESC
                 """)
                 rows = cur.fetchall()

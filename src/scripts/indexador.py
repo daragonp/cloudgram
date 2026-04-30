@@ -264,49 +264,45 @@ async def procesar_un_archivo_core(fid, name, servicio, cloud_url, content_text,
             import numpy as _np
             emb_str = _json.dumps(vector.tolist() if isinstance(vector, _np.ndarray) else vector)
         else:
-            # Si no hay vector, marcar como 'error_no_text' para indicar que sí lo intentamos
-            emb_str = 'error_no_text'
+            emb_str = None
 
-        if vector or emb_str:
-            with db._connect() as conn:
-                with conn.cursor() as cur:
-                    # 1. Actualizar el archivo original
+        # Siempre actualizar la fila con summary y content_text, embedding solo si hay vector
+        with db._connect() as conn:
+            with conn.cursor() as cur:
+                # 1. Actualizar el archivo original
+                cur.execute("""
+                    UPDATE files
+                    SET embedding = %s,
+                        summary   = COALESCE(%s, summary),
+                        content_text = COALESCE(%s, content_text)
+                    WHERE id = %s
+                """, (emb_str, resumen, texto_limpio, fid))
+
+                # 2. PROPAGACIÓN: Buscar duplicados por nombre en otras nubes que no tengan IA aún (solo si hay vector)
+                if vector:
                     cur.execute("""
                         UPDATE files
                         SET embedding = %s,
-                            summary   = COALESCE(%s, summary),
+                            summary = COALESCE(%s, summary),
                             content_text = COALESCE(%s, content_text)
-                        WHERE id = %s
-                    """, (emb_str, resumen, texto_limpio, fid))
-
-                    # 2. PROPAGACIÓN: Buscar duplicados por nombre en otras nubes que no tengan IA aún (solo si hay vector)
-                    if vector:
-                        cur.execute("""
-                            UPDATE files
-                            SET embedding = %s,
-                                summary = COALESCE(%s, summary),
-                                content_text = COALESCE(%s, content_text)
-                            WHERE name = %s 
-                            AND id != %s
-                            AND embedding IS NULL
-                        """, (emb_str, resumen, texto_limpio, name, fid))
-                        
-                        propagated = cur.rowcount
-                    else:
-                        propagated = 0
+                        WHERE name = %s 
+                        AND id != %s
+                        AND embedding IS NULL
+                    """, (emb_str, resumen, texto_limpio, name, fid))
                     
-                conn.commit()
-            
-            if vector:
-                await log(f"   ✅ Embedding guardado ({len(vector)} dims)")
-                if propagated > 0:
-                    await log(f"   🔄 Sincronizado automáticamente con {propagated} duplicado(s) en otras nubes.")
-                return True
-            else:
-                await log(f"   ⚠️ Marcado como sin contenido extraíble (pero procesado).")
-                return False
+                    propagated = cur.rowcount
+                else:
+                    propagated = 0
+                
+            conn.commit()
+        
+        if vector:
+            await log(f"   ✅ Embedding guardado ({len(vector)} dims)")
+            if propagated > 0:
+                await log(f"   🔄 Sincronizado automáticamente con {propagated} duplicado(s) en otras nubes.")
+            return True
         else:
-            await log(f"   ⚠️ No se pudo procesar {name}")
+            await log(f"   ⚠️ Procesado sin embedding (sin contenido extraíble).")
             return False
 
     except Exception as e:
