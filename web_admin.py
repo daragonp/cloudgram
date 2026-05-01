@@ -253,7 +253,7 @@ def dashboard():
                 # 3. Pendientes reales
                 cur.execute("""
                     SELECT COUNT(*) FROM files 
-                    WHERE embedding IS NULL
+                    WHERE embedding IS NULL AND summary IS NULL
                 """)
                 count_pending = cur.fetchone()[0]
 
