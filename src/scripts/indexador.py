@@ -226,7 +226,7 @@ async def procesar_un_archivo_core(fid, name, servicio, cloud_url, content_text,
                 await log(f"   🚫 Archivo no encontrado en la nube. Marcando como huérfano.")
                 with db._connect() as conn2:
                     with conn2.cursor() as cur2:
-                        cur2.execute("UPDATE files SET embedding = 'error_missing_in_cloud' WHERE id = %s", (fid,))
+                        cur2.execute("UPDATE files SET summary = 'Archivo no encontrado en la nube' WHERE id = %s", (fid,))
                     conn2.commit()
                 return False
 
