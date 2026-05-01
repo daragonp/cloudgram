@@ -326,6 +326,8 @@ def dashboard():
                                total_total=0, total_ia=0, total_fotos=0, total_pending=0,
             db_status=False, redis_status=False, redis_configured=False,
             drive_status=False, dropbox_status=False, onedrive_status=False)
+
+@app.route('/delete/<int:file_id>')
 @login_required
 def delete_file(file_id):
     try:
