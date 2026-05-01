@@ -57,7 +57,7 @@ CATEGORY_FOLDER_CACHE = {
 # ================================================================================================
 # RATE LIMITING DE COMANDOS TELEGRAM
 # ================================================================================================
-RATE_LIMIT_WINDOW_SECONDS = 30
+RATE_LIMIT_WINDOW_SECONDS = 5
 RATE_LIMIT_STATE = {}
 
 def is_rate_limited(user_id: int, command_name: str):
@@ -1167,8 +1167,8 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         normalized = []
         seen_names = set()
         
-        # Umbral MUCHO MÁS ESTRICTO (0.60) para evitar basura en los resultados.
-        semantic = [r for r in raw_results if r.get('similarity', 0) >= 0.60]
+        # Umbral de similitud ajustado (0.40) para incluir resultados relevantes sin demasiado ruido.
+        semantic = [r for r in raw_results if r.get('similarity', 0) >= 0.40]
         
         if not semantic:
             await msg.edit_text("🔄 No hay coincidencias perfectas por concepto. Buscando por nombre de forma tradicional...")
