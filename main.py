@@ -1134,6 +1134,10 @@ async def _process_single_embed(file_id: int, update: Update, context: ContextTy
     )
 
 async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Búsqueda inteligente tipo Google usando motor híbrido.
+    Combina: semántica + full-text + metadata con reranking.
+    """
     user_data = context.user_data
     if not context.args:
         return await update.message.reply_text("🔎 *Uso:* `/buscar_ia concepto`", parse_mode=ParseMode.MARKDOWN)
@@ -1143,70 +1147,48 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text(f"⏳ Por favor espera {wait}s antes de volver a usar /buscar_ia.")
 
     query_text = " ".join(context.args)
-    msg = await update.message.reply_text("🤖 Consultando mi base neuronal con OpenAI...")
+    msg = await update.message.reply_text("🔍 Buscando en mi base de datos con IA...")
     
     try:
-        # 1. Extraer intención de búsqueda (Texto semántico vs Tipo de archivo)
-        intent = await AIHandler.analyze_search_intent(query_text)
-        semantic_query = intent.get("semantic_query", query_text)
-        if not semantic_query.strip():
-            semantic_query = query_text # Fallback si extrajo solo la extensión
-        file_types = intent.get("file_types", [])
+        from src.init_services import search_engine
         
-        # Si el LLM extrajo tipos, se lo decimos al usuario para darle feedback
-        if file_types:
-            await msg.edit_text(f"🤖 Entendido. Buscando `{semantic_query}` en archivos tipo: {', '.join(file_types).upper()}...")
-
-        query_vector = await AIHandler.get_embedding(semantic_query)
-
-        if not query_vector:
-            return await msg.edit_text("❌ Error generando embedding. Verifica tu OPENAI_API_KEY.")
-
-        raw_results = db.search_semantic(query_vector, limit=20, file_types=file_types)
-
+        # 🚀 BÚSQUEDA HÍBRIDA: Semántica + Full-Text + Metadata
+        results = await search_engine.search(query_text, limit=20)
+        
+        if not results:
+            return await msg.edit_text(f"😔 No encontré archivos relevantes para: `{query_text}`.\n\n💡 Intenta con otros términos o revisa los tags de tus archivos.")
+        
+        # Preparar resultados para visualización
         normalized = []
         seen_names = set()
         
-        # Umbral de similitud ajustado (0.40) para incluir resultados relevantes sin demasiado ruido.
-        semantic = [r for r in raw_results if r.get('similarity', 0) >= 0.40]
+        for res in results:
+            name = res.get('name')
+            if name in seen_names:
+                continue
+            seen_names.add(name)
+            
+            # Construir descripción con score
+            score = res.get('combined_score', res.get('score', 0))
+            score_pct = int(score * 100)
+            score_emoji = "🔥" if score_pct >= 80 else "⭐" if score_pct >= 60 else "✓"
+            
+            summary_text = res.get('summary') or 'Archivo sin resumen'
+            if res.get('tags'):
+                summary_text += f" | Tags: {res.get('tags')}"
+            
+            normalized.append({
+                'id': res.get('id'),
+                'name': name,
+                'url': res.get('url'),
+                'service': res.get('service'),
+                'summary': summary_text,
+                'tags': res.get('tags'),
+                'score': score,
+                'score_emoji': score_emoji,
+                'score_pct': score_pct
+            })
         
-        if not semantic:
-            await msg.edit_text("🔄 No hay coincidencias perfectas por concepto. Buscando por nombre de forma tradicional...")
-            tradicional = db.search_by_name(query_text)
-            if not tradicional:
-                return await msg.edit_text(f"😔 No encontré archivos relevantes para: `{query_text}`.")
-
-            for fid, name, url, service, summary, tech in tradicional[:20]:
-                if name in seen_names:
-                    continue
-                seen_names.add(name)
-                normalized.append({
-                    'id': fid,
-                    'name': name,
-                    'url': url,
-                    'service': service,
-                    'summary': summary or (tech or 'Archivo'),
-                    'score': None
-                })
-        else:
-            for res in semantic:
-                name = res.get('name')
-                if name in seen_names:
-                    continue
-                seen_names.add(name)
-                summary_text = res.get('summary') or 'Sin resumen disponible.'
-                if res.get('tags'):
-                    summary_text += f" | Tags: {res.get('tags')}"
-                normalized.append({
-                    'id': res.get('id'),
-                    'name': name,
-                    'url': res.get('url'),
-                    'service': res.get('service'),
-                    'summary': summary_text,
-                    'tags': res.get('tags'),
-                    'score': res.get('similarity', None)
-                })
-
         user_data['search_results_ia'] = normalized
         user_data['ia_current_page'] = 0
         
@@ -1220,13 +1202,11 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await send_search_page(update, context)
 
-    except QuotaExceededError as qe:
-        return await msg.edit_text(f"⚠️ *IA temporalmente saturada:*\n{qe}\n\nIntenta una búsqueda por nombre tradicional o espera un minuto.")
     except Exception as e:
         print(f"❌ ERROR EN BUSQUEDA IA: {e}")
         import traceback
         traceback.print_exc()
-        await msg.edit_text(f"⚠️ Hubo un error procesando la búsqueda: {str(e)}")
+        await msg.edit_text(f"⚠️ Error en la búsqueda: {str(e)[:100]}")
 
 async def cancelar_handler(update, context):
     user_name = update.effective_user.first_name
@@ -1303,7 +1283,7 @@ async def send_delete_page(update, context, edit=False):
         )
         
 async def send_search_page(update, context, edit=False):
-    """Muestra resultados paginados con línea dinámica adaptable."""
+    """Muestra resultados paginados con línea dinámica adaptable y score de relevancia."""
     user_data = context.user_data
     results = user_data.get('search_results_ia', [])
     page = user_data.get('ia_current_page', 0)
@@ -1317,32 +1297,28 @@ async def send_search_page(update, context, edit=False):
     current_items = results[start_idx:end_idx]
     total_pages = (len(results) + items_per_page - 1) // items_per_page
 
-    text = f"🎯 *Resultados de búsqueda* (Página {page+1}/{total_pages})\n\n"
+    text = f"🎯 *Resultados de búsqueda IA* (Página {page+1}/{total_pages})\n\n"
     
-    # ANCHO DE LÍNEA DINÁMICO PARA TELEGRAM
-    # Telegram no notifica el ancho, usamos un estándar estético (ej. 30 caracteres).
-    # Se ajustará según el largo del emoji numérico.
     BASE_WIDTH = 30 
     
     for idx, item in enumerate(current_items, start_idx + 1):
-        score = f" ({int(item['score']*100)}%)" if item.get('score') else ""
+        # Mostrar relevancia con emoji y porcentaje
+        score_pct = item.get('score_pct', int((item.get('score', 0) * 100)))
+        score_emoji = item.get('score_emoji', '✓')
+        score_str = f" {score_emoji} *{score_pct}%*"
         
-        # Lógica para convertir cada dígito de número a emoji y calcular ancho de línea
+        # Emoji para número
         num_emoji = "".join(f"{d}️⃣" for d in str(idx))
-        
-        # Calcular cuántos '=' necesitamos para llenar la línea
-        # len(num_emoji) suele ser 3 para <10 (ej 1️⃣) y 4 para >=10 (ej 10️⃣)
-        # Restamos también el espacio después del emoji (+1)
         line_fill_len = BASE_WIDTH - len(num_emoji) - 1
         separator = "=" * line_fill_len
         
         text += f"{num_emoji} {separator}\n"
-        text += f"📄 *{item['name']}*{score}\n"
-        text += f"📝 _{item.get('summary','')}_\n"
+        text += f"📄 *{item['name']}*{score_str}\n"
+        text += f"📝 _{item.get('summary','')[:150]}_\n"
         if item.get('tags'):
-            text += f"🏷️ *Tags:* {item.get('tags')}\n"
+            text += f"🏷️ {item.get('tags')}\n"
         if item.get('url'):
-            text += f"🔗 *Enlace:* [Ver en la nube]({item['url']})\n"
+            text += f"🔗 [Ver en la nube]({item['url']})\n"
         text += "\n"
 
     nav_buttons = []

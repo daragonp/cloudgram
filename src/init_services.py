@@ -12,6 +12,8 @@ from src.database.db_handler import DatabaseHandler
 from src.services.dropbox_service import DropboxService
 from src.services.google_drive_service import GoogleDriveService
 from src.services.onedrive_service import OneDriveService
+from src.utils.ai_handler import AIHandler
+from src.search.hybrid_search import HybridSearchEngine
 
 load_dotenv()
 
@@ -78,6 +80,21 @@ openai_client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY")
 )
 logger.info("✅ Cliente OpenAI inicializado (embeddings, visión, audio, resúmenes)")
+
+# ============================================================================
+# MOTOR DE BÚSQUEDA HÍBRIDA
+# ============================================================================
+"""
+Motor de búsqueda tipo Google que combina:
+  • Búsqueda semántica (embeddings con pgvector)
+  • Búsqueda full-text mejorada (en múltiples campos)
+  • Búsqueda por metadatos (tags, descripción técnica)
+  • Reranking inteligente
+  • Caché en REDIS (si disponible)
+"""
+
+search_engine = HybridSearchEngine(db, AIHandler)
+logger.info("✅ Motor de búsqueda híbrida inicializado")
 
 # ============================================================================
 # FUNCIONES DE UTILIDAD

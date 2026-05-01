@@ -6,6 +6,9 @@ from datetime import datetime
 import os
 import sqlite3 
 import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ConnectionWrapper:
     """Envoltorio para asegurar que la conexión se cierre al salir de un bloque with."""
@@ -348,6 +351,162 @@ class DatabaseHandler:
                     return formatted_results
         except Exception as e:
             print(f"❌ Error semántico pgvector: {e}")
+            return []
+    
+    def search_fulltext_improved(self, query: str, limit: int = 20, file_types=None):
+        """
+        Búsqueda full-text mejorada con ranking BM25 (localStorage).
+        Obtiene todos los candidatos y rankea con BM25 en memoria.
+        Esto es más rápido y efectivo que ILIKE.
+        """
+        try:
+            with self._connect() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    # Obtener TODOS los documentos posibles (sin filtrar aún)
+                    like_query = f'%{query}%'
+                    sql = '''
+                        SELECT id, name, cloud_url, summary, service, tags, type, technical_description
+                        FROM files
+                        WHERE 
+                            name ILIKE %s OR
+                            tags ILIKE %s OR
+                            technical_description ILIKE %s OR
+                            summary ILIKE %s
+                        LIMIT 200
+                    '''
+                    
+                    params = [like_query, like_query, like_query, like_query]
+                    
+                    # Filtrar por tipos si es necesario
+                    if file_types and isinstance(file_types, list) and len(file_types) > 0:
+                        type_conditions = []
+                        for ft in file_types:
+                            ft_clean = ft.replace('.', '').strip().lower()
+                            type_conditions.append("(name ILIKE %s OR type ILIKE %s)")
+                            params.extend([f"%.{ft_clean}%", f"%{ft_clean}%"])
+                        
+                        sql = sql.replace("WHERE", f"WHERE ({' OR '.join(type_conditions)}) AND")
+                    
+                    cur.execute(sql, tuple(params))
+                    raw_results = cur.fetchall()
+                    
+                    # Aplicar BM25 ranking en memoria
+                    if raw_results:
+                        try:
+                            from src.search.bm25_search import BM25Search
+                            
+                            # Convertir a dicts para BM25
+                            docs_for_bm25 = [dict(r) for r in raw_results]
+                            
+                            # Rankear con BM25 (pesos: nombre > tags > desc > summary)
+                            ranked = BM25Search.search(
+                                docs_for_bm25, 
+                                query,
+                                field_weights={'name': 3.0, 'tags': 2.0, 'technical_description': 1.5, 'summary': 1.0}
+                            )
+                            
+                            # Formatear resultados
+                            formatted_results = []
+                            for doc, bm25_score in ranked[:limit]:
+                                formatted_results.append({
+                                    "id": doc['id'],
+                                    "name": doc['name'],
+                                    "url": doc['cloud_url'],
+                                    "score": min(bm25_score / 20.0, 1.0),  # Normalizar a 0-1
+                                    "summary": doc['summary'],
+                                    "service": doc['service'],
+                                    "tags": doc.get('tags'),
+                                    "type": doc.get('type')
+                                })
+                            
+                            return formatted_results
+                        except Exception as bm25_error:
+                            logger.warning(f"BM25 error, fallback a ILIKE: {bm25_error}")
+                            # Fallback a scoring simple
+                            formatted_results = []
+                            for r in raw_results[:limit]:
+                                formatted_results.append({
+                                    "id": r['id'],
+                                    "name": r['name'],
+                                    "url": r['cloud_url'],
+                                    "score": 0.5,
+                                    "summary": r['summary'],
+                                    "service": r['service'],
+                                    "tags": r.get('tags'),
+                                    "type": r.get('type')
+                                })
+                            return formatted_results
+                    
+                    return []
+        except Exception as e:
+            logger.error(f"❌ Error en búsqueda full-text: {e}")
+            return []
+    
+    def search_by_metadata(self, query: str, limit: int = 20, file_types=None):
+        """
+        Búsqueda por metadatos (tags, descripción técnica).
+        Útil para búsquedas más específicas.
+        """
+        try:
+            with self._connect() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    like_query = f'%{query}%'
+                    
+                    sql = '''
+                        SELECT 
+                            id, name, cloud_url, summary, service, tags, type,
+                            CASE 
+                                WHEN tags ILIKE %s THEN 8.0
+                                WHEN technical_description ILIKE %s THEN 6.0
+                                WHEN summary ILIKE %s THEN 3.0
+                                ELSE 1.0
+                            END as metadata_score
+                        FROM files
+                        WHERE 
+                            tags IS NOT NULL AND tags ILIKE %s
+                            OR technical_description IS NOT NULL AND technical_description ILIKE %s
+                    '''
+                    
+                    params = [
+                        like_query,  # tags exacto
+                        like_query,  # technical description
+                        like_query,  # summary
+                        like_query,  # WHERE - tags
+                        like_query   # WHERE - technical description
+                    ]
+                    
+                    # Filtrar por tipos
+                    if file_types and isinstance(file_types, list) and len(file_types) > 0:
+                        type_conditions = []
+                        for ft in file_types:
+                            ft_clean = ft.replace('.', '').strip().lower()
+                            type_conditions.append("(name ILIKE %s OR type ILIKE %s)")
+                            params.extend([f"%.{ft_clean}%", f"%{ft_clean}%"])
+                        
+                        sql += f" AND ({' OR '.join(type_conditions)})"
+                    
+                    sql += " ORDER BY metadata_score DESC LIMIT %s"
+                    params.append(limit)
+                    
+                    cur.execute(sql, tuple(params))
+                    results = cur.fetchall()
+                    
+                    formatted_results = []
+                    for r in results:
+                        formatted_results.append({
+                            "id": r['id'],
+                            "name": r['name'],
+                            "url": r['cloud_url'],
+                            "score": float(r['metadata_score']) / 8.0,  # Normalizar a 0-1
+                            "summary": r['summary'],
+                            "service": r['service'],
+                            "tags": r.get('tags'),
+                            "type": r.get('type')
+                        })
+                    
+                    return formatted_results
+        except Exception as e:
+            print(f"❌ Error en búsqueda de metadata: {e}")
             return []
 
     def get_last_files(self, limit=20):

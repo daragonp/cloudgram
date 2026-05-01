@@ -37,3 +37,5 @@ __pycache__/
 .DS_Store
 .local
 oracle_key/
+
+DEPLOYMENT_GUIDE.md
