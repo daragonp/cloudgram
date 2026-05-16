@@ -258,34 +258,52 @@ def print_server_welcome():
 
 # 3. FUNCIONES DE COMANDO
 async def list_files_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from src.utils.telegram_format import header as fmt_header, result_card, RULE
+
     files = db.get_last_files(20)
     if not files:
-        return await update.message.reply_text("La lista está vacía.")
-    
-    text = "📋 *Últimos 20 archivos:*\n\n"
-    for i, f in enumerate(files, 1): # El '1' inicia el conteo en 1
-        num_emoji = "".join(f"{d}️⃣" for d in str(i))
-        text += f"{num_emoji} [{f[1]}]({f[2]}) ({f[3].upper()})\n"
-    
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
-    
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = (
-        "🤖 *Ayuda de CloudGram Pro*\n\n"
-        "Comandos principales:\n"
-        "• /start - Menú principal\n"
-        "• /stats - Ver estadísticas en tiempo real\n"
-        "• /listar - Mostrar archivos recientes\n"
-        "• /buscar <texto> - Buscar por nombre\n"
-        "• /buscar_ia <consulta> - Búsqueda semántica (IA)\n"
-        "• /preguntar <ID> <pregunta> - Pregunta sobre un documento ya indexado\n"
-        "• /indexar - Generar embeddings pendientes\n"
-        "• /eliminar <texto> - Eliminar archivos por nombre\n"
-        "• /cancelar - Cancelar acciones en curso\n\n"
-        "También puedes enviar archivos (documentos, fotos, audio, voz).\n"
-        "Al enviar una nota de voz puedes elegir transcribir o subirla y seleccionar la/s nubes donde guardarla."
+        return await update.message.reply_text("📭 _La lista está vacía._", parse_mode=ParseMode.MARKDOWN)
+
+    blocks = [f"📋 {fmt_header('Últimos archivos', f'{len(files)} más recientes')}", ""]
+    for i, f in enumerate(files, 1):
+        # f es una tupla (id, name, url, service, ...)
+        blocks.append(result_card(
+            idx=i,
+            name=f[1],
+            service=f[3] if len(f) > 3 else None,
+            url=f[2] if len(f) > 2 else None,
+        ))
+    blocks.append(RULE)
+
+    await update.message.reply_text(
+        "\n".join(blocks),
+        parse_mode=ParseMode.MARKDOWN,
+        disable_web_page_preview=True,
     )
-    await update.message.reply_text(help_text)
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from src.utils.telegram_format import header as fmt_header, RULE
+    help_text = (
+        f"🤖 {fmt_header('Ayuda de CloudGram', 'Todos los comandos disponibles')}\n"
+        f"\n{RULE}\n"
+        "\n*Búsqueda y navegación*\n"
+        "• `/buscar_ia <consulta>` — búsqueda semántica con IA\n"
+        "• `/buscar <texto>` — búsqueda por nombre\n"
+        "• `/listar` — ver últimos archivos subidos\n"
+        "• `/preguntar <ID> <pregunta>` — pregunta sobre un documento\n"
+        "\n*Gestión*\n"
+        "• `/indexar` — generar embeddings pendientes\n"
+        "• `/eliminar <texto>` — eliminar archivos por nombre\n"
+        "• `/cancelar` — cancelar acciones en curso\n"
+        "\n*Información*\n"
+        "• `/start` — menú principal\n"
+        "• `/stats` — métricas del sistema\n"
+        "• `/ayuda` — esta ayuda\n"
+        f"\n{RULE}\n"
+        "_También puedes enviar archivos (documentos, fotos, audio, voz). "
+        "En notas de voz puedes elegir transcribir o guardar en una/varias nubes._"
+    )
+    await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Maneja el comando /stats para mostrar métricas directamente en Telegram."""
@@ -314,66 +332,66 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 count_pending = cur.fetchone()[0]
                 
         db_status = db.check_connection()
-        
-        # Barra de progreso IA
+
+        # Barra de progreso IA usando helper común
+        from src.utils.telegram_format import header as fmt_header, RULE, progress_bar, kv_row, status_dot
+
         if total_db > 0:
             porcentaje = (count_ia / total_db) * 100
-            bloques = int(porcentaje / 10)
-            barra = "■" * bloques + "□" * (10 - bloques)
+            barra = progress_bar(count_ia, total_db, width=12)
         else:
             porcentaje = 0
-            barra = "□" * 10
+            barra = progress_bar(0, 1, width=12)
 
-        texto = "📊 *ESTADÍSTICAS CLOUDGRAM*\n"
-        texto += "━━━━━━━━━━━━━━━━━━━━\n\n"
-        
-        texto += f"📁 *Archivos Totales:* `{total_db}`\n"
-        texto += f"🧠 *Indexación IA:* `{porcentaje:.1f}%`\n"
-        texto += f"`[{barra}]`\n\n"
-        
-        texto += "☁️ *Almacenamiento:*\n"
-        texto += f"🔹 Dropbox: `{services_count.get('dropbox', 0)}` \n"
-        texto += f"🔹 Google Drive: `{services_count.get('drive', 0)}` \n"
-        texto += f"🔹 OneDrive: `{services_count.get('onedrive', 0)}` \n\n"
-        
-        texto += f"📸 *Multimedia:* `{count_fotos}`\n"
-        texto += f"⚠️ *Pendientes:* `{count_pending}`\n\n"
-        
-        texto += "🔌 *Estado de Servicios:*\n"
-        texto += f"🗄️ Base de datos: {'`ONLINE ✅`' if db_status else '`OFFLINE ❌`'}\n"
-        
-        # Dropbox Status check
+        # Dropbox / Drive / OneDrive / OpenAI status checks
         from src.init_services import dropbox_svc
         try:
-            dbx_status = '`ONLINE ✅`' if (dropbox_svc and dropbox_svc.dbx) else '`OFFLINE ❌`'
-        except:
-            dbx_status = '`OFFLINE ❌`'
-        texto += f"☁️ Dropbox API: {dbx_status}\n"
+            dbx_online = bool(dropbox_svc and dropbox_svc.dbx)
+        except Exception:
+            dbx_online = False
 
-        # Drive Status check
         try:
             from src.scripts.refresh_drive_token import refresh_google_token
-            import contextlib
-            import io
+            import contextlib, io
             with contextlib.redirect_stdout(io.StringIO()):
-                drv_status = '`ONLINE ✅`' if refresh_google_token() else '`OFFLINE ❌`'
-        except:
-            drv_status = '`OFFLINE ❌`'
-        texto += f"☁️ Google Drive API: {drv_status}\n"
+                drv_online = bool(refresh_google_token())
+        except Exception:
+            drv_online = False
 
-        # OneDrive Status check
-        od_status = '`ONLINE ✅`' if (onedrive_svc and onedrive_svc.app and onedrive_svc._get_access_token()) else '`OFFLINE ❌`'
-        texto += f"☁️ OneDrive API: {od_status}\n"
+        try:
+            od_online = bool(onedrive_svc and onedrive_svc.app and onedrive_svc._get_access_token())
+        except Exception:
+            od_online = False
 
-        # OpenAI Status check
         from src.utils.ai_handler import AIHandler
         try:
             ai_health = await AIHandler.test_connection()
-            ai_status_str = ", ".join([f"{k}: {'✅' if v else '❌'}" for k, v in ai_health.items()])
-            texto += f"🧠 OpenAI: `{ai_status_str}`\n"
-        except:
-            texto += "🧠 OpenAI: `OFFLINE ❌`\n"
-        
+            ai_online = all(ai_health.values()) if isinstance(ai_health, dict) else bool(ai_health)
+        except Exception:
+            ai_online = False
+
+        texto = "📊 " + fmt_header("Estadísticas de CloudGram", "Estado en vivo del sistema")
+        texto += f"\n\n{RULE}\n"
+        texto += "*Resumen*\n"
+        texto += kv_row("Archivos totales", str(total_db)) + "\n"
+        texto += kv_row("Indexación IA", f"{porcentaje:.1f}%") + "\n"
+        texto += f"  `[{barra}]`\n"
+        texto += kv_row("Multimedia", str(count_fotos)) + "\n"
+        texto += kv_row("Pendientes", str(count_pending)) + "\n"
+        texto += f"\n{RULE}\n"
+        texto += "*Almacenamiento*\n"
+        texto += kv_row("Dropbox", str(services_count.get('dropbox', 0))) + "\n"
+        texto += kv_row("Google Drive", str(services_count.get('drive', 0))) + "\n"
+        texto += kv_row("OneDrive", str(services_count.get('onedrive', 0))) + "\n"
+        texto += f"\n{RULE}\n"
+        texto += "*Servicios*\n"
+        texto += f"{status_dot(db_status)}  Base de datos\n"
+        texto += f"{status_dot(dbx_online)}  Dropbox API\n"
+        texto += f"{status_dot(drv_online)}  Google Drive API\n"
+        texto += f"{status_dot(od_online)}  OneDrive API\n"
+        texto += f"{status_dot(ai_online)}  OpenAI\n"
+        texto += f"\n{RULE}"
+
         db.log_event("INFO", "BOT", "Comando /stats consultado con éxito.")
         await update.message.reply_text(texto, parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
@@ -426,18 +444,29 @@ async def unknown_command_handler(update: Update, context: ContextTypes.DEFAULT_
     except Exception:
         cmd = update.message.text or "(desconocido)"
 
-    await update.message.reply_text(f"❌ Comando desconocido: {cmd}\nUsa /ayuda para ver la lista de comandos disponibles.")
+    await update.message.reply_text(
+        f"❌ _Comando desconocido:_ `{cmd}`\n"
+        "Te muestro la lista de comandos disponibles:",
+        parse_mode=ParseMode.MARKDOWN,
+    )
     await help_command(update, context)
     
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = context.user_data
     query = " ".join(context.args)
     if not query:
-        return await update.message.reply_text("🔎 Indica el nombre del archivo.")
+        return await update.message.reply_text(
+            "🔎 _Indica el nombre del archivo que quieres buscar._\n"
+            "Ejemplo: `/buscar factura`",
+            parse_mode=ParseMode.MARKDOWN,
+        )
 
     raw = db.search_by_name(query)
     if not raw:
-        return await update.message.reply_text("❌ No encontré archivos con ese nombre.")
+        return await update.message.reply_text(
+            f"😔 _No encontré archivos con ese nombre:_ `{query}`",
+            parse_mode=ParseMode.MARKDOWN,
+        )
 
     normalized = []
     seen = set()
@@ -1156,16 +1185,26 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text(f"⏳ Por favor espera {wait}s antes de volver a usar /buscar_ia.")
 
     query_text = " ".join(context.args)
-    msg = await update.message.reply_text("🔍 Buscando en mi base de datos con IA...")
-    
+    msg = await update.message.reply_text(
+        "🔍 _Buscando con IA en tu base de datos…_",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
     try:
         from src.init_services import search_engine
-        
+        from src.utils.telegram_format import RULE
+
         # 🚀 BÚSQUEDA HÍBRIDA: Semántica + Full-Text + Metadata
         results = await search_engine.search(query_text, limit=20)
-        
+
         if not results:
-            return await msg.edit_text(f"😔 No encontré archivos relevantes para: `{query_text}`.\n\n💡 Intenta con otros términos o revisa los tags de tus archivos.")
+            return await msg.edit_text(
+                f"😔 *Sin resultados relevantes*\n"
+                f"\n{RULE}\n"
+                f"No encontré archivos que respondan a: `{query_text}`\n"
+                f"\n💡 _Prueba con otros términos o revisa los tags de tus archivos._",
+                parse_mode=ParseMode.MARKDOWN,
+            )
         
         # Preparar resultados para visualización
         normalized = []
@@ -1227,8 +1266,9 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cancelar_handler(update, context):
     user_name = update.effective_user.first_name
     await update.message.reply_text(
-        f"👋 ¡Entendido, {user_name}! He detenido cualquier proceso activo.\n"
-        "Estoy listo para tu siguiente búsqueda o archivo."
+        f"✓ _Entendido, {user_name}._\n"
+        "He detenido cualquier proceso activo. Estoy listo cuando quieras continuar.",
+        parse_mode=ParseMode.MARKDOWN,
     )
 
 async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1300,6 +1340,8 @@ async def send_delete_page(update, context, edit=False):
         
 async def send_search_page(update, context, edit=False):
     """Muestra resultados paginados con diseño limpio y razonamiento del LLM."""
+    from src.utils.telegram_format import header as fmt_header, result_card, score_emoji, RULE
+
     user_data = context.user_data
     results = user_data.get('search_results_ia', [])
     page = user_data.get('ia_current_page', 0)
@@ -1313,55 +1355,22 @@ async def send_search_page(update, context, edit=False):
     current_items = results[start_idx:end_idx]
     total_pages = (len(results) + items_per_page - 1) // items_per_page
 
-    # Header limpio
-    header = (
-        f"🎯 *Búsqueda IA*\n"
-        f"_{len(results)} resultado{'s' if len(results) != 1 else ''}"
-        f" · Página {page+1}/{total_pages}_\n"
-    )
-    text_blocks = [header]
-    rule = "━━━━━━━━━━━━━━━━━━━━━━━━"
-
-    def md_escape(s):
-        # Escape básico para no romper Markdown legacy.
-        if not s:
-            return ""
-        return s.replace("*", "·").replace("_", "‿").replace("`", "ʼ").replace("[", "(").replace("]", ")")
+    subtitle = f"{len(results)} resultado{'s' if len(results) != 1 else ''} · Página {page+1}/{total_pages}"
+    text_blocks = [f"🎯 {fmt_header('Búsqueda IA', subtitle)}", ""]
 
     for idx, item in enumerate(current_items, start_idx + 1):
-        score_pct = item.get('score_pct', 0)
-        score_emoji = item.get('score_emoji', '·')
+        score_pct = item.get('score_pct', int(round(item.get('score', 0) * 100)))
+        text_blocks.append(result_card(
+            idx=idx,
+            name=item['name'],
+            score_pct=score_pct,
+            summary=item.get('summary'),
+            llm_reason=item.get('llm_reason'),
+            tags=item.get('tags'),
+            url=item.get('url'),
+        ))
 
-        name_safe = md_escape(item['name'])
-        summary = md_escape((item.get('summary') or '')[:180]).strip()
-        if len(item.get('summary') or '') > 180:
-            summary += "…"
-
-        block = [
-            rule,
-            f"*{idx}.* `{name_safe}`",
-            f"{score_emoji} *{score_pct}% relevancia*",
-            "",
-            f"_{summary}_",
-        ]
-
-        # Footer con el razonamiento del re-ranker LLM (si está disponible).
-        llm_reason = item.get('llm_reason')
-        llm_score = item.get('llm_score')
-        if llm_reason and llm_score is not None:
-            reason_safe = md_escape(llm_reason)[:120]
-            block.append(f"\n💡 _Evaluado por IA: {reason_safe}_")
-
-        if item.get('tags'):
-            tags_safe = md_escape(str(item.get('tags')))[:80]
-            block.append(f"🏷  _{tags_safe}_")
-
-        if item.get('url'):
-            block.append(f"🔗 [Abrir en la nube]({item['url']})")
-
-        text_blocks.append("\n".join(block))
-
-    text_blocks.append(rule)
+    text_blocks.append(RULE)
     text = "\n".join(text_blocks)
 
     nav_buttons = []
@@ -1388,6 +1397,8 @@ async def send_search_page(update, context, edit=False):
 
 async def send_name_search_page(update, context, edit=False):
     """Muestra resultados paginados para el comando /buscar (por nombre)."""
+    from src.utils.telegram_format import header as fmt_header, result_card, RULE
+
     user_data = context.user_data
     results = user_data.get('name_search_results', [])
     page = user_data.get('name_search_page', 0)
@@ -1401,30 +1412,41 @@ async def send_name_search_page(update, context, edit=False):
     current_items = results[start_idx:end_idx]
     total_pages = (len(results) + items_per_page - 1) // items_per_page
 
-    text = f"🔎 *Resultados por nombre* (Página {page+1}/{total_pages})\n\n"
+    subtitle = f"{len(results)} resultado{'s' if len(results) != 1 else ''} · Página {page+1}/{total_pages}"
+    text_blocks = [f"🔎 {fmt_header('Búsqueda por nombre', subtitle)}", ""]
+
     for idx, item in enumerate(current_items, start_idx + 1):
-        num_emoji = "".join(f"{d}️⃣" for d in str(idx))
-        text += f"{num_emoji} \n"
-        text += f"📄 *{item['name']}* — _{item.get('service','').upper()}_\n"
-        text += f"📝 {item.get('summary','')}\n"
-        if item.get('url'):
-            text += f"🔗 [Abrir en la nube]({item['url']})\n"
-        text += "\n"
+        text_blocks.append(result_card(
+            idx=idx,
+            name=item['name'],
+            service=item.get('service'),
+            summary=item.get('summary'),
+            url=item.get('url'),
+        ))
+
+    text_blocks.append(RULE)
+    text = "\n".join(text_blocks)
 
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(InlineKeyboardButton("⬅️ Anterior", callback_data="name_search_prev"))
+        nav_buttons.append(InlineKeyboardButton("‹ Anterior", callback_data="name_search_prev"))
     if end_idx < len(results):
-        nav_buttons.append(InlineKeyboardButton("Siguiente ➡️", callback_data="name_search_next"))
+        nav_buttons.append(InlineKeyboardButton("Siguiente ›", callback_data="name_search_next"))
 
     keyboard = [nav_buttons] if nav_buttons else []
-    keyboard.append([InlineKeyboardButton("❌ Cancelar", callback_data="name_search_cancel")])
+    keyboard.append([InlineKeyboardButton("Cerrar", callback_data="name_search_cancel")])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if edit and update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+        await update.callback_query.edit_message_text(
+            text, reply_markup=reply_markup,
+            parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True,
+        )
     else:
-        await update.effective_chat.send_message(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+        await update.effective_chat.send_message(
+            text, reply_markup=reply_markup,
+            parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True,
+        )
 
 async def execute_full_deletion(fid, name, service, update):
     try:
