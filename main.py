@@ -55,20 +55,28 @@ CATEGORY_FOLDER_CACHE = {
 }
 
 # ================================================================================================
-# RATE LIMITING DE COMANDOS TELEGRAM
+# RATE LIMITING DE COMANDOS TELEGRAM (compartido entre workers vía Redis si está disponible)
 # ================================================================================================
 RATE_LIMIT_WINDOW_SECONDS = 5
-RATE_LIMIT_STATE = {}
+
+from src.utils.state_store import state_store as _state_store
+
 
 def is_rate_limited(user_id: int, command_name: str):
+    """Devuelve (limited: bool, wait_seconds: int).
+
+    Usa Redis si está configurado (multi-worker safe); fallback a memoria
+    in-process si no.
+    """
     if not user_id or not command_name:
         return False, 0
-    key = f"{user_id}:{command_name}"
-    now = time.time()
-    last_ts = RATE_LIMIT_STATE.get(key, 0)
-    if now - last_ts < RATE_LIMIT_WINDOW_SECONDS:
-        return True, int(RATE_LIMIT_WINDOW_SECONDS - (now - last_ts))
-    RATE_LIMIT_STATE[key] = now
+    key = f"rl:bot:{user_id}:{command_name}"
+    # INCR atómico con TTL: si es la primera llamada, contador queda en 1 y se
+    # fija el TTL; si ya estaba contando, sólo incrementa.
+    count = _state_store.incr_with_ttl(key, ttl=RATE_LIMIT_WINDOW_SECONDS)
+    if count > 1:
+        # Aproximación del wait: la mitad superior de la ventana.
+        return True, RATE_LIMIT_WINDOW_SECONDS
     return False, 0
 
 # ================================================================================================
@@ -218,9 +226,9 @@ def print_server_welcome():
 
     db_url = os.getenv("DATABASE_URL")
     if db_url and "supabase" in db_url.lower():
-        print(f"🗄️  Base de Datos:  CONECTADA A SUPABASE (Nube)")
+        print("🗄️  Base de Datos:  CONECTADA A SUPABASE (Nube)")
     else:
-        print(f"🗄️  Base de Datos:  LOCAL (SQLite)")
+        print("🗄️  Base de Datos:  LOCAL (SQLite)")
 
     # 5. Credenciales
     print("-" * cols)
@@ -316,14 +324,14 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             porcentaje = 0
             barra = "□" * 10
 
-        texto = f"📊 *ESTADÍSTICAS CLOUDGRAM*\n"
-        texto += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        texto = "📊 *ESTADÍSTICAS CLOUDGRAM*\n"
+        texto += "━━━━━━━━━━━━━━━━━━━━\n\n"
         
         texto += f"📁 *Archivos Totales:* `{total_db}`\n"
         texto += f"🧠 *Indexación IA:* `{porcentaje:.1f}%`\n"
         texto += f"`[{barra}]`\n\n"
         
-        texto += f"☁️ *Almacenamiento:*\n"
+        texto += "☁️ *Almacenamiento:*\n"
         texto += f"🔹 Dropbox: `{services_count.get('dropbox', 0)}` \n"
         texto += f"🔹 Google Drive: `{services_count.get('drive', 0)}` \n"
         texto += f"🔹 OneDrive: `{services_count.get('onedrive', 0)}` \n\n"
@@ -331,11 +339,11 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         texto += f"📸 *Multimedia:* `{count_fotos}`\n"
         texto += f"⚠️ *Pendientes:* `{count_pending}`\n\n"
         
-        texto += f"🔌 *Estado de Servicios:*\n"
+        texto += "🔌 *Estado de Servicios:*\n"
         texto += f"🗄️ Base de datos: {'`ONLINE ✅`' if db_status else '`OFFLINE ❌`'}\n"
         
         # Dropbox Status check
-        from src.init_services import dropbox_svc, onedrive_svc
+        from src.init_services import dropbox_svc
         try:
             dbx_status = '`ONLINE ✅`' if (dropbox_svc and dropbox_svc.dbx) else '`OFFLINE ❌`'
         except:
@@ -345,7 +353,8 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Drive Status check
         try:
             from src.scripts.refresh_drive_token import refresh_google_token
-            import contextlib, io
+            import contextlib
+            import io
             with contextlib.redirect_stdout(io.StringIO()):
                 drv_status = '`ONLINE ✅`' if refresh_google_token() else '`OFFLINE ❌`'
         except:
@@ -363,7 +372,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ai_status_str = ", ".join([f"{k}: {'✅' if v else '❌'}" for k, v in ai_health.items()])
             texto += f"🧠 OpenAI: `{ai_status_str}`\n"
         except:
-            texto += f"🧠 OpenAI: `OFFLINE ❌`\n"
+            texto += "🧠 OpenAI: `OFFLINE ❌`\n"
         
         db.log_event("INFO", "BOT", "Comando /stats consultado con éxito.")
         await update.message.reply_text(texto, parse_mode=ParseMode.MARKDOWN)
@@ -406,7 +415,7 @@ async def ask_document_command(update: Update, context: ContextTypes.DEFAULT_TYP
         answer = await AIHandler.answer_document_question(document_name, question, content_text)
         await update.message.reply_text(answer, parse_mode=ParseMode.MARKDOWN)
     except QuotaExceededError:
-        await update.message.reply_text(f"🚨 Cuota de IA agotada. Intenta de nuevo en unos instantes.")
+        await update.message.reply_text("🚨 Cuota de IA agotada. Intenta de nuevo en unos instantes.")
     except Exception as e:
         await update.message.reply_text(f"❌ Error procesando la pregunta: {e}")
 
@@ -863,7 +872,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Obtener nombre del archivo para el mensaje de progreso
         archivo = db.get_file_by_id(file_id)
-        nombre = archivo[1] if isinstance(archivo, tuple) else (archivo.get('name', '?') if archivo else '?')
+        nombre = archivo.get('name', '?') if archivo else '?'
 
         await query.answer()
         await query.edit_message_text(
@@ -920,8 +929,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             try:
                 await query.edit_message_text(
-                    f"🚀 *Indexando en lote...*\n"
-                    f"━" * 18 + "\n"
+                    "🚀 *Indexando en lote...*\n"
+                    "━" * 18 + "\n"
                     f"Archivo {idx}/{total}: `{fname}`\n"
                     f"✅ Éxitos: {ok_count} │ ❌ Fallos: {fail_count}",
                     parse_mode=ParseMode.MARKDOWN
@@ -954,8 +963,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not quota_hit:
             pendientes = db.count_files_without_embedding()
             await query.edit_message_text(
-                f"✅ *Lote completado*\n"
-                f"━" * 18 + "\n"
+                "✅ *Lote completado*\n"
+                "━" * 18 + "\n"
                 f"✅ Indexados: {ok_count}\n"
                 f"❌ Sin texto: {fail_count}\n"
                 f"⚠️ Pendientes totales: {pendientes}\n\n"
@@ -993,9 +1002,9 @@ async def send_indexar_page(update: ContextTypes.DEFAULT_TYPE, context: ContextT
 
     # Construir el texto principal
     text = "🧠 *Indexación de Archivos*\n"
-    text += f"━" * 20 + "\n"
+    text += "━" * 20 + "\n"
     text += f"⚠️ *{total}* archivo(s) sin indexar — Pág. {page + 1}/{total_pages}\n"
-    text += f"━" * 20 + "\n\n"
+    text += "━" * 20 + "\n\n"
 
     for i, archivo in enumerate(archivos, start=offset + 1):
         num_emoji = "".join(f"{d}️⃣" for d in str(i))
@@ -1063,15 +1072,15 @@ async def _process_single_embed(file_id: int, update: Update, context: ContextTy
     import aiohttp
     import tempfile
 
-    # Obtener info del archivo desde la DB
+    # Obtener info del archivo desde la DB (siempre dict gracias a RealDictCursor)
     archivo = db.get_file_by_id(file_id)
     if not archivo:
         logger.warning(f"⚠️ _process_single_embed: archivo ID={file_id} no encontrado en DB")
         return False
 
-    name = archivo[1] if isinstance(archivo, tuple) else archivo.get('name', '')
-    service = archivo[2] if isinstance(archivo, tuple) else archivo.get('service', '')
-    cloud_url = archivo[3] if isinstance(archivo, tuple) else archivo.get('cloud_url', '')
+    name = archivo.get('name', '')
+    service = archivo.get('service', '')
+    cloud_url = archivo.get('cloud_url', '')
 
     # Intentar obtener content_text desde la DB (evita re-descarga)
     with db._connect() as conn:
@@ -1244,7 +1253,7 @@ async def send_delete_page(update, context, edit=False):
     if not current_items:
         return await update.effective_chat.send_message("❌ No hay más archivos para mostrar.")
 
-    text = f"🗑️ *Panel de Eliminación*\n"
+    text = "🗑️ *Panel de Eliminación*\n"
     text += f"📖 Página {page+1} de {total_pages}\n"
     text += "⎯" * 15 + "\n\n"
     

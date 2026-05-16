@@ -80,17 +80,34 @@ app.secret_key = flask_secret
 
 csrf = CSRFProtect(app)
 
-# Limitador de tasa
+# Limitador de tasa — usa Redis si está disponible para que el límite cuente
+# globalmente entre todos los workers; fallback a memoria sólo en dev.
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+_redis_url_for_limiter = (
+    os.getenv("REDIS_URL")
+    or os.getenv("REDIS_BROKER_URL")
+    or os.getenv("REDIS_URI")
+)
 limiter = Limiter(
     get_remote_address,
     app=app,
-    storage_uri="memory://"
+    storage_uri=_redis_url_for_limiter or "memory://",
+    default_limits=[],
 )
+if _redis_url_for_limiter:
+    print(f"✅ Flask-Limiter usando Redis: {_redis_url_for_limiter.split('@')[-1]}")
+else:
+    print("⚠️ Flask-Limiter en memoria (sólo válido con 1 worker).")
 
-# Estado global para control de procesos (Cancellation tokens)
-app.stop_embeddings = False
+# Estado global compartido vía Redis (si está disponible).
+# Antes usábamos `app.stop_embeddings` y `app.auth_flows` en memoria, lo cual
+# se rompe con multi-worker Gunicorn. Ahora delegamos al state_store.
+from src.utils.state_store import state_store
+
+EMBED_STOP_KEY = "cloudgram:embed_stop"
+AUTH_FLOW_KEY_FMT = "cloudgram:auth_flow:{provider}:{user_id}"
+AUTH_FLOW_TTL = 600  # 10 min para completar un flujo OAuth
 
 # --- SISTEMA ANTI-DORMICIÓN (KEEP-ALIVE) ---
 def run_keep_alive():
@@ -113,13 +130,9 @@ def run_keep_alive():
 if os.environ.get('RENDER_EXTERNAL_URL'):
     threading.Thread(target=run_keep_alive, daemon=True).start()
 
-# Almacén temporal de flujos de autenticación (En memoria)
-# En una app multi-usuario real usaríamos una base de datos o Redis
-app.auth_flows = {
-    'dropbox': {}, # user_id -> flow
-    'google': {},  # user_id -> flow
-    'onedrive': {} # user_id -> flow
-}
+# Nota: los flujos OAuth temporales se persisten en `state_store` (Redis o
+# memoria) bajo claves `cloudgram:auth_flow:<provider>:<user_id>` con TTL de
+# 10 minutos, en lugar del antiguo `app.auth_flows` en memoria.
 
 # --- LOGO / FAVICON HANDLING ------------------------------------------------
 # the admin logo may now live inside the static folder (static/logo/logo.JPG)
@@ -572,7 +585,7 @@ def run_embeddings_endpoint():
 
                 # Pasamos la función que verifica si el usuario pidió detenerse
                 def check_stop():
-                    return getattr(app, 'stop_embeddings', False)
+                    return state_store.get_bool(EMBED_STOP_KEY, default=False)
 
                 result = await generar_embeddings_pendientes(limite, cb, check_stop)
                 app.embed_queue.put(f"✅ Finalizado: {result['procesados']} embeddings, {result['errores']} errores.")
@@ -586,14 +599,18 @@ def run_embeddings_endpoint():
             loop.close()
 
     threading.Thread(target=thread_wrapper, daemon=True).start()
-    app.stop_embeddings = False  # Resetear flag de parada al iniciar
+    state_store.delete(EMBED_STOP_KEY)  # Resetear flag de parada al iniciar
     return {"status": "success", "backend": "thread", "limite": limite}, 200
 
 @app.route('/stop-embeddings', methods=['POST'])
 @login_required
 def stop_embeddings_endpoint():
-    """Establece el flag de parada para detener el proceso de embeddings."""
-    app.stop_embeddings = True
+    """Establece el flag de parada para detener el proceso de embeddings.
+
+    Persistido en Redis (vía state_store) con TTL de 1h por si el worker
+    quedó huérfano.
+    """
+    state_store.set_bool(EMBED_STOP_KEY, True, ttl=3600)
     if hasattr(app, 'embed_queue') and app.embed_queue:
         app.embed_queue.put("🛑 Recibida petición de parada. Finalizando lote...")
     return {"status": "success", "message": "Petición de parada enviada"}, 200
@@ -780,22 +797,26 @@ def auth_dropbox_start():
     try:
         app_key = os.getenv("DROPBOX_APP_KEY")
         app_secret = os.getenv("DROPBOX_APP_SECRET")
-        
+
         if not app_key or not app_secret:
             return {"ok": False, "error": "Faltan DROPBOX_APP_KEY o APP_SECRET en el .env"}, 400
-            
+
         # Flujo sin redirección (manual code)
         flow = dropbox.DropboxOAuth2FlowNoRedirect(
-            app_key, 
-            app_secret, 
+            app_key,
+            app_secret,
             token_access_type='offline'
         )
-        
+
         auth_url = flow.start()
-        
-        # Guardamos el flujo para el siguiente paso
-        app.auth_flows['dropbox'][current_user.id] = flow
-        
+
+        # Marcamos en el state_store que este usuario está en pleno flujo.
+        # En `finish` recreamos el flow desde las mismas credenciales.
+        state_store.set_bool(
+            AUTH_FLOW_KEY_FMT.format(provider='dropbox', user_id=current_user.id),
+            True, ttl=AUTH_FLOW_TTL,
+        )
+
         return {"ok": True, "url": auth_url}, 200
     except Exception as e:
         return {"ok": False, "error": str(e)}, 500
@@ -808,21 +829,27 @@ def auth_dropbox_finish():
         code = request.form.get('code', '').strip()
         if not code:
             return {"ok": False, "error": "El código es obligatorio"}, 400
-            
-        flow = app.auth_flows['dropbox'].get(current_user.id)
-        if not flow:
-            return {"ok": False, "error": "Sesión de autenticación expirada o no iniciada"}, 400
-            
-        oauth_result = flow.finish(code)
-        
-        # Guardar en .env
-        save_env_secret("DROPBOX_REFRESH_TOKEN", oauth_result.refresh_token)
 
-        # Limpiar flujo
-        app.auth_flows['dropbox'].pop(current_user.id, None)
-        
+        flow_key = AUTH_FLOW_KEY_FMT.format(provider='dropbox', user_id=current_user.id)
+        if not state_store.get_bool(flow_key):
+            return {"ok": False, "error": "Sesión de autenticación expirada o no iniciada"}, 400
+
+        app_key = os.getenv("DROPBOX_APP_KEY")
+        app_secret = os.getenv("DROPBOX_APP_SECRET")
+        if not app_key or not app_secret:
+            return {"ok": False, "error": "Credenciales Dropbox no configuradas"}, 400
+
+        # Recreamos el flow (es stateless con DropboxOAuth2FlowNoRedirect).
+        flow = dropbox.DropboxOAuth2FlowNoRedirect(
+            app_key, app_secret, token_access_type='offline'
+        )
+        oauth_result = flow.finish(code)
+
+        save_env_secret("DROPBOX_REFRESH_TOKEN", oauth_result.refresh_token)
+        state_store.delete(flow_key)
+
         return {
-            "ok": True, 
+            "ok": True,
             "message": "¡Token guardado de forma segura en el servidor!"
         }, 200
     except Exception as e:
@@ -835,39 +862,28 @@ def auth_drive_start():
     try:
         client_id = os.getenv("GOOGLE_CLIENT_ID")
         client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
-        
+
         if not client_id or not client_secret:
             return {"ok": False, "error": "Faltan GOOGLE_CLIENT_ID o CLIENT_SECRET en el .env"}, 400
-            
-        client_config = {
-            "installed": {
-                "client_id": client_id,
-                "project_id": "cloudgram-pro",
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "client_secret": client_secret,
-                "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob", "http://localhost"]
-            }
-        }
-        
+
+        client_config = _build_google_client_config(client_id, client_secret)
         scopes = ["https://www.googleapis.com/auth/drive.file"]
-        
-        # Usamos 'urn:ietf:wg:oauth:2.0:oob' si la cuenta lo permite, 
-        # pero Google lo está retirando. En modo web, 'postmessage' o 
-        # una URL de redirección real es mejor.
+
         flow = Flow.from_client_config(
-            client_config, 
-            scopes=scopes, 
+            client_config,
+            scopes=scopes,
             redirect_uri='urn:ietf:wg:oauth:2.0:oob'
         )
-        
+
         auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
-        
-        app.auth_flows['google'][current_user.id] = flow
-        
+
+        state_store.set_bool(
+            AUTH_FLOW_KEY_FMT.format(provider='google', user_id=current_user.id),
+            True, ttl=AUTH_FLOW_TTL,
+        )
+
         return {"ok": True, "url": auth_url}, 200
     except Exception as e:
-        # Fallback a un error descriptivo
         return {"ok": False, "error": f"Error configurando flujo de Google: {str(e)}"}, 500
 
 @app.route('/auth/drive/finish', methods=['POST'])
@@ -878,26 +894,48 @@ def auth_drive_finish():
         code = request.form.get('code', '').strip()
         if not code:
             return {"ok": False, "error": "El código es obligatorio"}, 400
-            
-        flow = app.auth_flows['google'].get(current_user.id)
-        if not flow:
+
+        flow_key = AUTH_FLOW_KEY_FMT.format(provider='google', user_id=current_user.id)
+        if not state_store.get_bool(flow_key):
             return {"ok": False, "error": "Sesión de autenticación expirada o no iniciada"}, 400
-            
+
+        client_id = os.getenv("GOOGLE_CLIENT_ID")
+        client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+        if not client_id or not client_secret:
+            return {"ok": False, "error": "Credenciales Google no configuradas"}, 400
+
+        client_config = _build_google_client_config(client_id, client_secret)
+        scopes = ["https://www.googleapis.com/auth/drive.file"]
+        flow = Flow.from_client_config(
+            client_config, scopes=scopes,
+            redirect_uri='urn:ietf:wg:oauth:2.0:oob',
+        )
         flow.fetch_token(code=code)
         creds = flow.credentials
-        
-        # Guardar en .env
-        save_env_secret("GOOGLE_DRIVE_TOKEN_JSON", creds.to_json())
 
-        # Limpiar flujo
-        app.auth_flows['google'].pop(current_user.id, None)
-        
+        save_env_secret("GOOGLE_DRIVE_TOKEN_JSON", creds.to_json())
+        state_store.delete(flow_key)
+
         return {
-            "ok": True, 
+            "ok": True,
             "message": "¡Token de Drive guardado de forma segura en el servidor!"
         }, 200
     except Exception as e:
         return {"ok": False, "error": str(e)}, 500
+
+
+def _build_google_client_config(client_id: str, client_secret: str) -> dict:
+    """Construye el client_config para google_auth_oauthlib.flow.Flow."""
+    return {
+        "installed": {
+            "client_id": client_id,
+            "project_id": "cloudgram-pro",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "client_secret": client_secret,
+            "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob", "http://localhost"]
+        }
+    }
 
 
 @app.route('/archivos-errores')
@@ -1056,22 +1094,18 @@ def embed_single_stream(file_id):
         asyncio.set_event_loop(loop)
         try:
             async def _process():
-                # Obtener datos del archivo
+                # Obtener datos del archivo (siempre dict gracias a RealDictCursor)
                 row = db.get_file_by_id(file_id)
                 if not row:
                     local_queue.put(f"❌ Error: Archivo ID {file_id} no encontrado.")
                     local_queue.put(None)
                     return
 
-                # RealDictCursor devuelve dict, pero db.get_file_by_id parece devolver tupla en algunos hilos?
-                # Revisemos db_handler.py: get_file_by_id usa fetchone() sin cursor_factory en la línea 327
-                # Pero en la línea 331 dice "Esto devolverá un diccionario gracias al RealDictCursor" (comentario erróneo?)
-                # Hagamos una extracción segura:
-                if isinstance(row, dict):
-                    fid, name, service, cloud_url, content_text = row['id'], row['name'], row['service'], row['cloud_url'], row.get('content_text')
-                else:
-                    fid, name, service, cloud_url = row[:4]
-                    content_text = row[4] if len(row) > 4 else None
+                fid = row['id']
+                name = row['name']
+                service = row['service']
+                cloud_url = row.get('cloud_url')
+                content_text = row.get('content_text')
 
                 from src.scripts.indexador import procesar_un_archivo_core
                 
@@ -1214,22 +1248,26 @@ def auth_onedrive_start():
         client_id = os.getenv("ONEDRIVE_CLIENT_ID")
         client_secret = os.getenv("ONEDRIVE_CLIENT_SECRET")
         tenant_id = os.getenv("ONEDRIVE_TENANT_ID", "common")
-        
+
         if not client_id or not client_secret:
             return {"ok": False, "error": "Faltan ONEDRIVE_CLIENT_ID o CLIENT_SECRET en el .env"}, 400
-            
+
         import msal
         authority = f"https://login.microsoftonline.com/{tenant_id}"
         scopes = ["Files.ReadWrite.All"]
-        
+
         msal_app = msal.ConfidentialClientApplication(
             client_id, authority=authority, client_credential=client_secret
         )
-        
-        # Usamos localhost como callback (solo para capturar el código del URL)
-        auth_url = msal_app.get_authorization_request_url(scopes, redirect_uri="http://localhost:5000/callback")
-        
-        app.auth_flows['onedrive'][current_user.id] = msal_app
+
+        auth_url = msal_app.get_authorization_request_url(
+            scopes, redirect_uri="http://localhost:5000/callback"
+        )
+
+        state_store.set_bool(
+            AUTH_FLOW_KEY_FMT.format(provider='onedrive', user_id=current_user.id),
+            True, ttl=AUTH_FLOW_TTL,
+        )
         return {"ok": True, "url": auth_url}, 200
     except Exception as e:
         return {"ok": False, "error": str(e)}, 500
@@ -1242,21 +1280,33 @@ def auth_onedrive_finish():
         code = request.form.get('code', '').strip()
         if not code:
             return {"ok": False, "error": "El código es obligatorio"}, 400
-            
-        msal_app = app.auth_flows['onedrive'].get(current_user.id)
-        if not msal_app:
+
+        flow_key = AUTH_FLOW_KEY_FMT.format(provider='onedrive', user_id=current_user.id)
+        if not state_store.get_bool(flow_key):
             return {"ok": False, "error": "Sesión de autenticación expirada"}, 400
-            
+
+        client_id = os.getenv("ONEDRIVE_CLIENT_ID")
+        client_secret = os.getenv("ONEDRIVE_CLIENT_SECRET")
+        tenant_id = os.getenv("ONEDRIVE_TENANT_ID", "common")
+        if not client_id or not client_secret:
+            return {"ok": False, "error": "Credenciales OneDrive no configuradas"}, 400
+
+        import msal
+        authority = f"https://login.microsoftonline.com/{tenant_id}"
+        msal_app = msal.ConfidentialClientApplication(
+            client_id, authority=authority, client_credential=client_secret
+        )
+
         scopes = ["Files.ReadWrite.All"]
         result = msal_app.acquire_token_by_authorization_code(
             code, scopes=scopes, redirect_uri="http://localhost:5000/callback"
         )
-        
+
         if "refresh_token" in result:
             save_env_secret("ONEDRIVE_REFRESH_TOKEN", result["refresh_token"])
-            app.auth_flows['onedrive'].pop(current_user.id, None)
+            state_store.delete(flow_key)
             return {
-                "ok": True, 
+                "ok": True,
                 "message": "¡Token de OneDrive guardado de forma segura en el servidor!"
             }, 200
         else:

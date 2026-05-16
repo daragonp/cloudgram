@@ -110,7 +110,8 @@ async def _process_zip_contents(local_zip_path, zip_name, cloud_url, service, te
 
                 summary_data = await AIHandler.generate_summary_with_tags(texto)
                 tags = ",".join(summary_data.get('tags', [])) if summary_data.get('tags') else None
-                internal_name = f"{zip_name} > {os.path.relpath(file_path, extract_dir).replace('\\', '/')}"
+                rel_path = os.path.relpath(file_path, extract_dir).replace("\\", "/")
+                internal_name = f"{zip_name} > {rel_path}"
 
                 db.register_file(
                     telegram_id=telegram_id,
