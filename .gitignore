@@ -38,4 +38,12 @@ __pycache__/
 .local
 oracle_key/
 
-DEPLOYMENT_GUIDE.md
+DEPLOYMENT_GUIDE.md-e 
+# Environment and credential files
+.env
+.env.*
+*.env
+credentials.json
+*.pem
+*.key
+.credentials
