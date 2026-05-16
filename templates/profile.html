@@ -1,43 +1,56 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<div class="d-flex align-items-center justify-content-between mb-4">
-    <div>
-        <h2 class="fw-bold mb-1 text-white"><i class="bi bi-person-gear me-2" style="color: var(--accent);"></i> Ajustes de Perfil</h2>
-        <p class="text-muted mb-0">Gestiona tus credenciales de administrador</p>
-    </div>
+<div class="page-header">
+    <h1>Ajustes de perfil</h1>
+    <p>Gestiona tus credenciales de administrador</p>
 </div>
 
 <div class="row">
-    <div class="col-lg-8 col-xl-6">
+    <div class="col-lg-8 col-xl-7">
         <div class="glass-panel p-4 p-md-5">
             <form action="{{ url_for('perfil') }}" method="POST">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
                 <div class="row g-4 mb-4">
                     <div class="col-md-6">
-                        <label class="form-label text-white-50 small fw-bold text-uppercase" style="letter-spacing: 0.5px;">Nombre de Administrador</label>
-                        <input type="text" name="nombre" class="form-control bg-dark border-secondary text-white" value="{{ user.nombre }}" placeholder="Ej: Admin CloudGram">
+                        <label class="form-label" for="profileName">Nombre del administrador</label>
+                        <input id="profileName" type="text" name="nombre" class="form-control"
+                               value="{{ user.nombre or '' }}" placeholder="Ej. Pedro Ramírez">
                     </div>
                     <div class="col-md-6">
-                        <label class="form-label text-muted small fw-bold text-uppercase" style="letter-spacing: 0.5px;">Email (No editable)</label>
-                        <input type="email" class="form-control bg-dark border-dark text-muted" value="{{ user.email }}" readonly style="cursor: not-allowed;">
+                        <label class="form-label" for="profileEmail">Correo (no editable)</label>
+                        <input id="profileEmail" type="email" class="form-control" value="{{ user.email }}"
+                               readonly style="cursor: not-allowed; opacity: 0.6;">
                     </div>
                 </div>
 
-                <div class="mb-5">
-                    <label class="form-label text-white-50 small fw-bold text-uppercase" style="letter-spacing: 0.5px;">Nueva Contraseña</label>
+                <div class="mb-4">
+                    <label class="form-label" for="newPassword">Nueva contraseña</label>
                     <div class="input-group">
-                        <span class="input-group-text bg-dark border-secondary text-muted border-end-0"><i class="bi bi-key"></i></span>
-                        <input id="newPassword" type="password" name="new_password" class="form-control bg-dark border-secondary text-white border-end-0 border-start-0 ps-0" placeholder="Mínimo 6 caracteres">
-                        <button class="btn btn-outline-secondary border-start-0 border-secondary bg-dark text-muted" type="button" id="togglePassword">
+                        <span class="input-group-text border-end-0">
+                            <i class="bi bi-key"></i>
+                        </span>
+                        <input id="newPassword" type="password" name="new_password" class="form-control"
+                               placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+                        <button class="btn btn-soft" type="button" id="togglePassword" aria-label="Mostrar contraseña">
                             <i class="bi bi-eye"></i>
                         </button>
                     </div>
-                    <div class="form-text mt-2 text-muted" style="font-size: 0.8rem;"><i class="bi bi-info-circle me-1"></i>Deja este campo vacío si no deseas cambiar la contraseña actual.</div>
+                    <small class="d-inline-block mt-2" style="color: var(--text-tertiary); font-size: 0.82rem;">
+                        <i class="bi bi-info-circle me-1"></i>
+                        Deja este campo vacío si no deseas cambiar tu contraseña actual.
+                    </small>
                 </div>
 
-                <button type="submit" class="btn btn-accent text-dark border-0 px-4 py-3 w-100 fw-bold rounded-3">Guardar Cambios</button>
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-accent px-4">
+                        Guardar cambios
+                    </button>
+                    <a href="{{ url_for('dashboard') }}" class="btn btn-soft px-4">
+                        Cancelar
+                    </a>
+                </div>
             </form>
         </div>
     </div>
@@ -49,9 +62,11 @@
         const pwdInput = document.getElementById('newPassword');
         if (toggleBtn && pwdInput) {
             toggleBtn.addEventListener('click', function() {
-                const type = pwdInput.getAttribute('type') === 'password' ? 'text' : 'password';
-                pwdInput.setAttribute('type', type);
-                toggleBtn.innerHTML = type === 'password' ? '<i class="bi bi-eye"></i>' : '<i class="bi bi-eye-slash"></i>';
+                const isHidden = pwdInput.getAttribute('type') === 'password';
+                pwdInput.setAttribute('type', isHidden ? 'text' : 'password');
+                toggleBtn.innerHTML = isHidden
+                    ? '<i class="bi bi-eye-slash"></i>'
+                    : '<i class="bi bi-eye"></i>';
             });
         }
     });

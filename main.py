@@ -1176,16 +1176,21 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if name in seen_names:
                 continue
             seen_names.add(name)
-            
+
             # Construir descripción con score
             score = res.get('combined_score', res.get('score', 0))
-            score_pct = int(score * 100)
-            score_emoji = "🔥" if score_pct >= 80 else "⭐" if score_pct >= 60 else "✓"
-            
+            score_pct = int(round(score * 100))
+            if score_pct >= 80:
+                score_emoji = "🔥"
+            elif score_pct >= 60:
+                score_emoji = "⭐"
+            elif score_pct >= 40:
+                score_emoji = "✓"
+            else:
+                score_emoji = "·"
+
             summary_text = res.get('summary') or 'Archivo sin resumen'
-            if res.get('tags'):
-                summary_text += f" | Tags: {res.get('tags')}"
-            
+
             normalized.append({
                 'id': res.get('id'),
                 'name': name,
@@ -1195,7 +1200,9 @@ async def search_ia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'tags': res.get('tags'),
                 'score': score,
                 'score_emoji': score_emoji,
-                'score_pct': score_pct
+                'score_pct': score_pct,
+                'llm_score': res.get('llm_score'),
+                'llm_reason': res.get('llm_reason'),
             })
         
         user_data['search_results_ia'] = normalized
@@ -1292,7 +1299,7 @@ async def send_delete_page(update, context, edit=False):
         )
         
 async def send_search_page(update, context, edit=False):
-    """Muestra resultados paginados con línea dinámica adaptable y score de relevancia."""
+    """Muestra resultados paginados con diseño limpio y razonamiento del LLM."""
     user_data = context.user_data
     results = user_data.get('search_results_ia', [])
     page = user_data.get('ia_current_page', 0)
@@ -1306,44 +1313,77 @@ async def send_search_page(update, context, edit=False):
     current_items = results[start_idx:end_idx]
     total_pages = (len(results) + items_per_page - 1) // items_per_page
 
-    text = f"🎯 *Resultados de búsqueda IA* (Página {page+1}/{total_pages})\n\n"
-    
-    BASE_WIDTH = 30 
-    
+    # Header limpio
+    header = (
+        f"🎯 *Búsqueda IA*\n"
+        f"_{len(results)} resultado{'s' if len(results) != 1 else ''}"
+        f" · Página {page+1}/{total_pages}_\n"
+    )
+    text_blocks = [header]
+    rule = "━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    def md_escape(s):
+        # Escape básico para no romper Markdown legacy.
+        if not s:
+            return ""
+        return s.replace("*", "·").replace("_", "‿").replace("`", "ʼ").replace("[", "(").replace("]", ")")
+
     for idx, item in enumerate(current_items, start_idx + 1):
-        # Mostrar relevancia con emoji y porcentaje
-        score_pct = item.get('score_pct', int((item.get('score', 0) * 100)))
-        score_emoji = item.get('score_emoji', '✓')
-        score_str = f" {score_emoji} *{score_pct}%*"
-        
-        # Emoji para número
-        num_emoji = "".join(f"{d}️⃣" for d in str(idx))
-        line_fill_len = BASE_WIDTH - len(num_emoji) - 1
-        separator = "=" * line_fill_len
-        
-        text += f"{num_emoji} {separator}\n"
-        text += f"📄 *{item['name']}*{score_str}\n"
-        text += f"📝 _{item.get('summary','')[:150]}_\n"
+        score_pct = item.get('score_pct', 0)
+        score_emoji = item.get('score_emoji', '·')
+
+        name_safe = md_escape(item['name'])
+        summary = md_escape((item.get('summary') or '')[:180]).strip()
+        if len(item.get('summary') or '') > 180:
+            summary += "…"
+
+        block = [
+            rule,
+            f"*{idx}.* `{name_safe}`",
+            f"{score_emoji} *{score_pct}% relevancia*",
+            "",
+            f"_{summary}_",
+        ]
+
+        # Footer con el razonamiento del re-ranker LLM (si está disponible).
+        llm_reason = item.get('llm_reason')
+        llm_score = item.get('llm_score')
+        if llm_reason and llm_score is not None:
+            reason_safe = md_escape(llm_reason)[:120]
+            block.append(f"\n💡 _Evaluado por IA: {reason_safe}_")
+
         if item.get('tags'):
-            text += f"🏷️ {item.get('tags')}\n"
+            tags_safe = md_escape(str(item.get('tags')))[:80]
+            block.append(f"🏷  _{tags_safe}_")
+
         if item.get('url'):
-            text += f"🔗 [Ver en la nube]({item['url']})\n"
-        text += "\n"
+            block.append(f"🔗 [Abrir en la nube]({item['url']})")
+
+        text_blocks.append("\n".join(block))
+
+    text_blocks.append(rule)
+    text = "\n".join(text_blocks)
 
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(InlineKeyboardButton("⬅️ Anterior", callback_data="search_page_prev"))
+        nav_buttons.append(InlineKeyboardButton("‹ Anterior", callback_data="search_page_prev"))
     if end_idx < len(results):
-        nav_buttons.append(InlineKeyboardButton("Siguiente ➡️", callback_data="search_page_next"))
+        nav_buttons.append(InlineKeyboardButton("Siguiente ›", callback_data="search_page_next"))
 
     keyboard = [nav_buttons] if nav_buttons else []
-    keyboard.append([InlineKeyboardButton("❌ Cancelar", callback_data="search_cancel")])
+    keyboard.append([InlineKeyboardButton("Cerrar", callback_data="search_cancel")])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if edit and update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+        await update.callback_query.edit_message_text(
+            text, reply_markup=reply_markup,
+            parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True,
+        )
     else:
-        await update.effective_chat.send_message(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+        await update.effective_chat.send_message(
+            text, reply_markup=reply_markup,
+            parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True,
+        )
 
 
 async def send_name_search_page(update, context, edit=False):

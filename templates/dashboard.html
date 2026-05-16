@@ -2,11 +2,9 @@
 
 {% block content %}
 <!-- HEADER -->
-<div class="d-flex align-items-center justify-content-between mb-4">
-    <div>
-        <h2 class="fw-bold mb-1 text-white">Dashboard Overview</h2>
-        <p class="text-muted mb-0">Métricas en tiempo real y estado de los servicios</p>
-    </div>
+<div class="page-header">
+    <h1>Panel principal</h1>
+    <p>Estado en tiempo real de tu indexación, servicios y archivos.</p>
 </div>
 
 {% set porcentaje = (total_ia / total_total * 100)|round|int if total_total > 0 else 0 %}
@@ -15,67 +13,57 @@
 <div class="row g-4 mb-4">
     <!-- Total Archivos -->
     <div class="col-xl-3 col-md-6">
-        <div class="glass-panel p-4 h-100 position-relative overflow-hidden">
+        <div class="glass-panel metric-card p-4 h-100 position-relative overflow-hidden">
             <div class="d-flex justify-content-between align-items-center mb-3">
-                <h6 class="text-muted mb-0 fw-semibold text-uppercase" style="letter-spacing: 0.5px; font-size: 0.85rem;">Total Archivos</h6>
-                <div class="bg-secondary bg-opacity-25 p-2 rounded-3 text-white">
-                    <i class="bi bi-files fs-5"></i>
+                <h6 class="mb-0" style="font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-tertiary); font-weight: 600;">Total archivos</h6>
+                <div style="width: 36px; height: 36px; border-radius: var(--r-sm); background: var(--bg-elev-2); display: grid; place-items: center; color: var(--text-secondary);">
+                    <i class="bi bi-files"></i>
                 </div>
             </div>
-            <h2 class="fw-bold mb-0 text-white display-6">{{ total_total }}</h2>
-            <div class="position-absolute end-0 bottom-0 opacity-10 pe-3 pb-2">
-                <i class="bi bi-files" style="font-size: 4rem;"></i>
-            </div>
+            <h2 class="fw-bold mb-0" style="font-size: 2.4rem; letter-spacing: -0.03em;">{{ total_total }}</h2>
         </div>
     </div>
 
     <!-- Indexados IA -->
     <div class="col-xl-3 col-md-6">
-        <div class="glass-panel p-4 h-100 position-relative overflow-hidden" style="border-top: 3px solid var(--accent);">
+        <div class="glass-panel metric-card p-4 h-100 position-relative overflow-hidden">
             <div class="d-flex justify-content-between align-items-center mb-3">
-                <h6 class="text-cyan mb-0 fw-semibold text-uppercase" style="letter-spacing: 0.5px; font-size: 0.85rem;">Indexados IA</h6>
-                <div class="bg-info bg-opacity-25 p-2 rounded-3 text-info">
-                    <i class="bi bi-cpu fs-5"></i>
+                <h6 class="mb-0" style="font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); font-weight: 600;">Indexados con IA</h6>
+                <div style="width: 36px; height: 36px; border-radius: var(--r-sm); background: var(--accent-tint); display: grid; place-items: center; color: var(--accent);">
+                    <i class="bi bi-cpu"></i>
                 </div>
             </div>
             <div class="d-flex align-items-baseline gap-2">
-                <h2 class="fw-bold mb-0 text-white display-6">{{ total_ia }}</h2>
-                <span class="text-cyan fw-bold" style="font-size: 1rem;">({{ porcentaje }}%)</span>
+                <h2 class="fw-bold mb-0" style="font-size: 2.4rem; letter-spacing: -0.03em;">{{ total_ia }}</h2>
+                <span style="color: var(--accent); font-weight: 500;">{{ porcentaje }}%</span>
             </div>
-            
-            <div class="progress mt-3" style="height: 6px; background-color: rgba(255,255,255,0.1);">
-                <div class="progress-bar bg-info" role="progressbar" data-width="{{ porcentaje }}" aria-valuenow="{{ porcentaje }}" aria-valuemin="0" aria-valuemax="100" id="iaProgressBar"></div>
-            </div>
-            <div class="position-absolute end-0 bottom-0 opacity-10 pe-3 pb-2 text-cyan">
-                <i class="bi bi-cpu" style="font-size: 4rem;"></i>
+            <div class="progress mt-3">
+                <div class="progress-bar" role="progressbar" data-width="{{ porcentaje }}" aria-valuenow="{{ porcentaje }}" aria-valuemin="0" aria-valuemax="100" id="iaProgressBar" style="width:0%;"></div>
             </div>
         </div>
     </div>
 
     <!-- Multimedia -->
     <div class="col-xl-3 col-md-6">
-        <div class="glass-panel p-4 h-100 position-relative overflow-hidden">
+        <div class="glass-panel metric-card p-4 h-100 position-relative overflow-hidden">
             <div class="d-flex justify-content-between align-items-center mb-3">
-                <h6 class="text-muted mb-0 fw-semibold text-uppercase" style="letter-spacing: 0.5px; font-size: 0.85rem;">Multimedia (Visión)</h6>
-                <div class="bg-warning bg-opacity-25 p-2 rounded-3 text-warning">
-                    <i class="bi bi-camera-video fs-5"></i>
+                <h6 class="mb-0" style="font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-tertiary); font-weight: 600;">Multimedia (visión)</h6>
+                <div style="width: 36px; height: 36px; border-radius: var(--r-sm); background: rgba(255,159,10,0.18); display: grid; place-items: center; color: var(--warning);">
+                    <i class="bi bi-camera-video"></i>
                 </div>
             </div>
-            <h2 class="fw-bold mb-0 text-white display-6">{{ total_fotos }}</h2>
-            <div class="position-absolute end-0 bottom-0 opacity-25 pe-3 pb-2 text-warning">
-                <i class="bi bi-camera-video" style="font-size: 4rem;"></i>
-            </div>
+            <h2 class="fw-bold mb-0" style="font-size: 2.4rem; letter-spacing: -0.03em;">{{ total_fotos }}</h2>
         </div>
     </div>
 
     <!-- Pendientes/Errores -->
     <div class="col-xl-3 col-md-6">
         <a href="{{ url_for('archivos_errores') }}" class="text-decoration-none">
-            <div class="glass-panel p-4 h-100 position-relative overflow-hidden" style="border-top: 3px solid #dc3545; transition: 0.3s;" onmouseover="this.style.background='rgba(220,53,69,0.1)'" onmouseout="this.style.background='var(--card-bg)'">
+            <div class="glass-panel metric-card p-4 h-100 position-relative overflow-hidden" style="cursor: pointer;">
                 <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h6 class="text-danger mb-0 fw-semibold text-uppercase" style="letter-spacing: 0.5px; font-size: 0.85rem;">Pendientes / Error</h6>
-                    <div class="bg-danger bg-opacity-25 p-2 rounded-3 text-danger">
-                        <i class="bi bi-exclamation-triangle fs-5"></i>
+                    <h6 class="mb-0" style="font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--danger); font-weight: 600;">Pendientes / Errores</h6>
+                    <div style="width: 36px; height: 36px; border-radius: var(--r-sm); background: rgba(255,69,58,0.18); display: grid; place-items: center; color: var(--danger);">
+                        <i class="bi bi-exclamation-triangle"></i>
                     </div>
                 </div>
                 <h2 class="fw-bold mb-0 text-danger display-6">{{ total_pending }}</h2>
