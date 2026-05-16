@@ -4,11 +4,18 @@ services:
   - type: web
     name: cloudgram-monolith
     env: python
-    buildCommand: pip install -r requirements.txt
+    # Fijamos Python 3.12 porque varias dependencias pinneadas
+    # (jiter, pydantic_core, cryptography, etc.) aún no publican wheels
+    # para Python 3.14 — Render lo usa por defecto a partir de 2026.
+    pythonVersion: "3.12.7"
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
     startCommand: python3 app.py
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
       - key: PORT
         value: 10000
       - key: START_KEEP_ALIVE
         value: "true"
-      # Recuerda agregar DATABASE_URL, TELEGRAM_BOT_TOKEN, etc. manualmente en Render
+      # Recuerda agregar DATABASE_URL, TELEGRAM_BOT_TOKEN, FLASK_SECRET_KEY,
+      # OPENAI_API_KEY, DROPBOX_*, GOOGLE_*, ONEDRIVE_*, REDIS_URL manualmente en Render.
