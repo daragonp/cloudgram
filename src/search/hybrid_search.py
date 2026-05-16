@@ -170,7 +170,7 @@ class RedisCache:
 # ---------------------------------------------------------------------------
 
 class HybridSearchEngine:
-    """Motor de búsqueda híbrida con Reciprocal Rank Fusion."""
+    """Motor de búsqueda híbrida con Reciprocal Rank Fusion + re-ranker LLM."""
 
     # Constante k del RRF — 60 es el valor canónico (Cormack et al., 2009).
     RRF_K = 60
@@ -180,13 +180,28 @@ class HybridSearchEngine:
     NAME_TOKEN_BOOST = 1.25
     TAGS_BOOST = 1.20
 
-    # Umbrales:
-    #   • Si el TOP semantic_similarity < SEMANTIC_FLOOR y además no hay
-    #     ningún match literal en nombre/tags/descripción → devolvemos vacío.
-    SEMANTIC_FLOOR = 0.30
+    # Umbrales (absolutos, sobre similitud coseno 0..1):
+    #   • SEMANTIC_FLOOR: por debajo se considera ruido si tampoco hay match
+    #     léxico → la query devuelve [].
+    #   • DISPLAY_FLOOR: para los resultados que SÍ devolvemos, escondemos
+    #     los que tengan score final < este valor.
+    SEMANTIC_FLOOR = 0.40
+    DISPLAY_FLOOR = 0.30
 
-    #   • Resultados con combined_score normalizado < MIN_SCORE se descartan.
-    MIN_SCORE = 0.05
+    # ¿Activar el reranker LLM? Se puede desactivar con USE_LLM_RERANKER=0.
+    # Se activa automáticamente si OPENAI_API_KEY está presente.
+    @staticmethod
+    def _llm_reranker_enabled() -> bool:
+        flag = os.getenv("USE_LLM_RERANKER", "auto").lower()
+        if flag in ("0", "false", "no", "off"):
+            return False
+        if flag in ("1", "true", "yes", "on"):
+            return True
+        # auto: encendido si hay clave OpenAI.
+        return bool(os.getenv("OPENAI_API_KEY"))
+
+    # ¿Cuántos candidatos enviar al LLM como máximo?
+    LLM_RERANK_TOP = 12
 
     def __init__(self, db_handler, ai_handler):
         self.db = db_handler
@@ -251,15 +266,49 @@ class HybridSearchEngine:
             logger.info(f"🪫 Query '{query}' sin resultados relevantes (filtro).")
             return []
 
-        # 4. RRF + boosts.
+        # 4. RRF + boosts (ordena candidatos, sin asignar todavía el score
+        #    final que verá el usuario).
         fused = self._rrf_fuse(semantic, fulltext, metadata, query_norm)
 
-        # 5. Filtrar y limitar.
-        filtered = [r for r in fused if r.get('combined_score', 0) >= self.MIN_SCORE]
+        # 5. Re-ranking con LLM sobre el head (lo crítico para evitar falsos
+        #    positivos del retrieval: el LLM lee los summaries y decide si
+        #    realmente responden a la query).
+        if self._llm_reranker_enabled() and fused:
+            try:
+                fused = await self.ai.rerank_search_results(
+                    query=query,
+                    candidates=fused,
+                    top_k=self.LLM_RERANK_TOP,
+                )
+                logger.info("🤖 Re-ranking LLM aplicado a top %d.",
+                            min(self.LLM_RERANK_TOP, len(fused)))
+            except Exception as rr_err:
+                logger.warning(f"⚠️ Reranker LLM error: {rr_err}. Sigo con RRF.")
+
+        # 6. Asignar score FINAL absoluto al usuario.
+        for item in fused:
+            llm_score = item.get('llm_score')
+            sem = float(item.get('_semantic_similarity', 0) or 0)
+            boost = float(item.get('_lex_boost', 1.0))
+
+            if llm_score is not None:
+                # El LLM ya consideró léxica + semántica + summary.
+                final = max(0.0, min(1.0, llm_score))
+            else:
+                # Score absoluto = semantic_similarity con un pequeño nudge
+                # (cap a 1.0) si hay coincidencias literales en nombre/tags.
+                final = min(1.0, sem * boost) if sem > 0 else 0.0
+
+            item['combined_score'] = final
+            item['score'] = final
+
+        # 7. Filtrar por DISPLAY_FLOOR y reordenar.
+        filtered = [r for r in fused if r.get('combined_score', 0) >= self.DISPLAY_FLOOR]
+        filtered.sort(key=lambda x: x['combined_score'], reverse=True)
         final_results = filtered[:limit]
 
         logger.info(
-            "✅ Búsqueda '%s' → %d resultados (de %d candidatos tras RRF).",
+            "✅ Búsqueda '%s' → %d resultados (de %d candidatos tras RRF+LLM).",
             query, len(final_results), len(fused),
         )
 
@@ -353,17 +402,18 @@ class HybridSearchEngine:
                   query_norm: str) -> List[Dict]:
         """Fusión por Reciprocal Rank Fusion + boosts.
 
-        RRF: para cada lista, el documento en posición `r` contribuye
-            1 / (k + r). Sumamos las contribuciones de las 3 listas.
-        Es robusto a escalas distintas y se usa en producción (Elasticsearch,
-        Vespa, Weaviate, etc.).
+        Esta versión NO asigna todavía el `combined_score` final que se va a
+        mostrar al usuario — sólo ORDENA los candidatos y deja anotaciones
+        (`_rrf_score`, `_semantic_similarity`, `_lex_boost`, `_sources`) que
+        consume el caller. El score final se asigna después, usando el
+        re-ranker LLM si está disponible.
         """
         rrf_scores: Dict[int, float] = {}
         item_by_id: Dict[int, Dict] = {}
         sources: Dict[int, Set[str]] = {}
         semantic_sim: Dict[int, float] = {}
 
-        def add(lst, source_label, score_field):
+        def add(lst, source_label):
             for rank, item in enumerate(lst, start=1):
                 fid = item.get('id')
                 if fid is None:
@@ -371,11 +421,9 @@ class HybridSearchEngine:
                 contribution = 1.0 / (self.RRF_K + rank)
                 rrf_scores[fid] = rrf_scores.get(fid, 0.0) + contribution
                 sources.setdefault(fid, set()).add(source_label)
-                # Conservamos la versión más completa del dict.
                 if fid not in item_by_id:
                     item_by_id[fid] = dict(item)
                 else:
-                    # Rellenar campos faltantes desde otra fuente.
                     for k, v in item.items():
                         if v is not None and item_by_id[fid].get(k) in (None, ""):
                             item_by_id[fid][k] = v
@@ -385,19 +433,13 @@ class HybridSearchEngine:
                         float(item.get('_score_semantic', 0) or 0),
                     )
 
-        add(semantic, "semantic", "_score_semantic")
-        add(fulltext, "fulltext", "_score_fulltext")
-        add(metadata, "metadata", "_score_metadata")
-
-        # Normalizar RRF a [0..1] dividiendo por el máximo (estable y simple).
-        max_rrf = max(rrf_scores.values(), default=0.0) or 1.0
+        add(semantic, "semantic")
+        add(fulltext, "fulltext")
+        add(metadata, "metadata")
 
         results: List[Dict] = []
         for fid, raw_score in rrf_scores.items():
-            base = raw_score / max_rrf  # 0..1
             item = item_by_id[fid]
-
-            # Boost por nombre/tags.
             name_norm = normalize(item.get('name', ''))
             tags_norm = normalize(item.get('tags', '') or '')
 
@@ -408,19 +450,15 @@ class HybridSearchEngine:
                 q_tokens = [t for t in query_norm.split() if len(t) >= 3]
                 if q_tokens and any(t in name_norm for t in q_tokens):
                     boost *= self.NAME_TOKEN_BOOST
-
             if query_norm and tags_norm and query_norm in tags_norm:
                 boost *= self.TAGS_BOOST
 
-            combined = min(1.0, base * boost)
-
-            # Adjuntar metadatos útiles para la UI / logs.
-            item['combined_score'] = combined
-            item['score'] = combined
             item['_rrf_score'] = raw_score
             item['_sources'] = sorted(sources[fid])
             item['_semantic_similarity'] = semantic_sim.get(fid, 0.0)
+            item['_lex_boost'] = boost
             results.append(item)
 
-        results.sort(key=lambda x: x['combined_score'], reverse=True)
+        # Orden inicial por RRF (lo refinará luego el LLM).
+        results.sort(key=lambda x: x['_rrf_score'], reverse=True)
         return results

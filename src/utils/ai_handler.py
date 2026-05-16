@@ -656,3 +656,124 @@ class AIHandler:
         except Exception as e:
             logger.error(f"❌ Error al analizar intención: {e}")
             return {"semantic_query": query_text, "file_types": []}
+
+
+    @staticmethod
+    async def rerank_search_results(query: str,
+                                    candidates: list,
+                                    top_k: int = 10) -> list:
+        """Reranker basado en LLM (gpt-4o-mini).
+
+        Recibe la query del usuario y una lista de candidatos (dicts con al
+        menos `id`, `name`, `summary`/`tags`) y le pide al modelo que asigne
+        un score 0.0–1.0 de relevancia REAL a cada uno, basándose en si el
+        contenido descrito responde a la query.
+
+        Esto resuelve el problema de los falsos positivos del retrieval:
+        por ejemplo, una foto cuyo summary menciona "leopardo" matchea
+        semánticamente con "animales" aunque la foto sea de personas con
+        bikini estampado de leopardo.
+
+        Args:
+            query: texto crudo del usuario.
+            candidates: lista de dicts. Sólo se usan `id`, `name`, `summary`
+                y `tags`.
+            top_k: máximo de candidatos a enviar al LLM (para limitar costes).
+
+        Returns:
+            La misma lista de candidatos, pero con un nuevo campo `llm_score`
+            entre 0.0 y 1.0, y ORDENADA por `llm_score` descendente. Los que
+            no pudieron rankearse mantienen `llm_score = None` y se devuelven
+            al final.
+        """
+        if not candidates:
+            return candidates
+
+        head = candidates[:top_k]
+        tail = candidates[top_k:]
+
+        # Construir bloque compacto con sólo lo esencial.
+        items_payload = []
+        for c in head:
+            summary = (c.get('summary') or '')[:280]
+            tags = c.get('tags') or ''
+            items_payload.append({
+                "id": c.get('id'),
+                "name": c.get('name', '')[:80],
+                "summary": summary,
+                "tags": tags[:120] if tags else "",
+            })
+
+        system_msg = (
+            "Eres un evaluador de relevancia de búsqueda. Te paso una query del "
+            "usuario y una lista de documentos (cada uno con id, name, summary y "
+            "tags). Para CADA documento, devuelve un score de 0.0 a 1.0 que "
+            "represente qué tan bien responde a la query.\n\n"
+            "Reglas:\n"
+            " • 1.0 = el contenido descrito responde directamente a la query.\n"
+            " • 0.7 = relacionado, probablemente útil.\n"
+            " • 0.4 = tangencialmente relacionado (menciona algo de la query "
+            "pero no es lo principal).\n"
+            " • 0.1 = palabra suelta coincide por casualidad.\n"
+            " • 0.0 = no tiene nada que ver.\n\n"
+            "IMPORTANTE: NO te dejes engañar por coincidencias léxicas. Si el "
+            "usuario pide 'fotos con animales' y el documento dice 'bikini con "
+            "estampado de leopardo' eso es 0.1, no 0.8. Si dice 'reunión de "
+            "trabajo' y el documento es una foto familiar, es 0.0.\n\n"
+            "Responde EXCLUSIVAMENTE con JSON válido en este formato exacto:\n"
+            '{"scores": [{"id": <id>, "score": <0..1>, "reason": "<≤12 palabras>"}, ...]}'
+        )
+
+        user_msg = json.dumps({
+            "query": query,
+            "documents": items_payload,
+        }, ensure_ascii=False)
+
+        try:
+            client = AIHandler._get_openai_client()
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": user_msg},
+                ],
+                temperature=0.0,
+                max_tokens=900,
+                response_format={"type": "json_object"},
+            )
+            raw = response.choices[0].message.content
+            parsed = json.loads(raw)
+            scores_by_id = {
+                int(item["id"]): float(item.get("score", 0.0))
+                for item in parsed.get("scores", [])
+                if "id" in item
+            }
+            reasons_by_id = {
+                int(item["id"]): item.get("reason", "")
+                for item in parsed.get("scores", [])
+                if "id" in item
+            }
+        except QuotaExceededError:
+            raise
+        except Exception as rerank_err:
+            logger.warning(f"⚠️ Reranker LLM falló: {rerank_err}. Sin reranking.")
+            for c in head:
+                c['llm_score'] = None
+            return head + tail
+
+        # Anotar los candidatos.
+        for c in head:
+            fid = c.get('id')
+            c['llm_score'] = scores_by_id.get(fid)
+            if fid in reasons_by_id:
+                c['llm_reason'] = reasons_by_id[fid]
+
+        # Ordenar el head por llm_score (los None van al final con score 0).
+        head.sort(key=lambda x: (x.get('llm_score') if x.get('llm_score') is not None else -1),
+                  reverse=True)
+
+        # El tail no fue evaluado por el LLM; lo dejamos al final.
+        for c in tail:
+            c['llm_score'] = None
+
+        return head + tail
