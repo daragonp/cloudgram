@@ -45,10 +45,14 @@ else:
 
 # Google Drive Service
 drive_svc = GoogleDriveService()
-if drive_svc.service:
-    logger.info("✅ GoogleDriveService conectado")
+# La conexión real se crea perezosamente; intentamos disparar la inicialización
+# aquí para que el log de arranque refleje el estado real.
+try:
+    drive_svc._get_service()
+except Exception as drive_init_err:
+    logger.warning(f"⚠️ GoogleDriveService no disponible: {drive_init_err}")
 else:
-    logger.warning("⚠️ GoogleDriveService no disponible")
+    logger.info("✅ GoogleDriveService conectado")
 
 # OneDrive Service
 onedrive_svc = OneDriveService(

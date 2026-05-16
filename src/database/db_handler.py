@@ -550,11 +550,6 @@ class DatabaseHandler:
                 return [(r['id'], r['name'], r['cloud_url'], r['service'], r['content_text'], r['embedding']) 
                         for r in rows]
     
-    def reset_failed_embeddings(self):
-        # En pgvector, los fallos son representados con NULL ahora (ya limpiamos error_limit antes)
-        # Si tienes algún otro valor por default que representa error, modifícalo aquí
-        pass
-
     def reset_all_embeddings(self):
         """Reinicia TODOS los archivos (borra resúmenes y embeddings) para un recálculo desde cero."""
         try:
@@ -834,12 +829,17 @@ class DatabaseHandler:
             return f"-- Error en la exportación: {e}"
     
     def update_user_name(self, user_id, nuevo_nombre):
-        """Actualiza el nombre para mostrar del administrador"""
+        """Actualiza el nombre para mostrar del administrador.
+
+        La columna en la tabla `users` se llama `name` (ver _setup_initial_db).
+        Históricamente este método apuntaba a `nombre` y rompía el endpoint
+        /perfil del panel web.
+        """
         try:
             with self._connect() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "UPDATE users SET nombre = %s WHERE id = %s",
+                        "UPDATE users SET name = %s WHERE id = %s",
                         (nuevo_nombre, user_id)
                     )
                     conn.commit()

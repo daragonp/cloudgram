@@ -59,9 +59,23 @@ db = DatabaseHandler()
 app = Flask(__name__)
 
 # Seguridad Crítica: Clave secreta
+# Debe ser estable entre reinicios y workers; fallar rápido si no está.
 flask_secret = os.getenv("FLASK_SECRET_KEY")
 if not flask_secret or flask_secret == "dev_key_only":
-    flask_secret = os.urandom(24)
+    if os.getenv("FLASK_ENV") == "development" or os.getenv("FLASK_DEBUG") == "1":
+        # En desarrollo permitimos una clave efímera pero ruidosa.
+        import warnings
+        warnings.warn(
+            "FLASK_SECRET_KEY no está configurada — generando una temporal SOLO para desarrollo.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        flask_secret = os.urandom(32).hex()
+    else:
+        raise RuntimeError(
+            "FLASK_SECRET_KEY es obligatoria en producción. "
+            "Defínela en las variables de entorno como una cadena aleatoria de 32+ chars."
+        )
 app.secret_key = flask_secret
 
 csrf = CSRFProtect(app)
@@ -175,11 +189,14 @@ class User(UserMixin):
 def load_user(user_id):
     user_data = db.get_user_by_id(user_id)
     if user_data:
+        # La tabla `users` usa la columna `name`, pero históricamente el
+        # código miraba `nombre`. Aceptamos ambas para compatibilidad.
+        display_name = user_data.get('name') or user_data.get('nombre')
         return User(
             user_data['id'],
             user_data['email'],
             user_data['password_hash'],
-            nombre=user_data.get('nombre')
+            nombre=display_name,
         )
     return None
 
@@ -211,11 +228,12 @@ def login():
         user_row = db.get_user_by_email(email)
 
         if user_row and check_password_hash(user_row['password_hash'], password):
+            display_name = user_row.get('name') or user_row.get('nombre')
             user_obj = User(
                 user_row['id'],
                 user_row['email'],
                 user_row['password_hash'],
-                nombre=user_row.get('nombre')
+                nombre=display_name,
             )
             login_user(user_obj)
             flash('¡Bienvenido al panel administrativo!', 'success')
@@ -270,7 +288,8 @@ def dashboard():
         try:
             # Verificamos si el token de Drive es funcional o renovable
             drive_status = refresh_google_token()
-        except:
+        except Exception as drive_err:
+            print(f"⚠️ Drive token check failed: {drive_err}")
             drive_status = False
         
         # Dropbox Status
@@ -280,7 +299,8 @@ def dashboard():
                 # Verificación rápida: obtener cuenta actual
                 dropbox_svc.dbx.users_get_current_account()
                 dropbox_status = True
-            except:
+            except Exception as dbx_err:
+                print(f"⚠️ Dropbox status check failed: {dbx_err}")
                 dropbox_status = False
 
         # Redis Status
@@ -303,7 +323,8 @@ def dashboard():
                 # Si podemos obtener un token, está online
                 if onedrive_svc._get_access_token():
                     onedrive_status = True
-            except:
+            except Exception as od_err:
+                print(f"⚠️ OneDrive status check failed: {od_err}")
                 onedrive_status = False
 
         return render_template(
@@ -647,7 +668,7 @@ def health_check():
             "database": "online" if db_ok else "offline",
             "timestamp": datetime.now().isoformat()
         }), 200 if db_ok else 503
-    except Exception as e:
+    except Exception:
         return jsonify({
             "status": "error",
             "timestamp": datetime.now().isoformat()
@@ -929,9 +950,6 @@ def embed_single(file_id):
             asyncio.set_event_loop(loop)
             try:
                 async def _process():
-                    from src.scripts.indexador import generar_embeddings_pendientes
-                    reporte = await generar_embeddings_pendientes(limite=1,
-                        progreso_callback=None)
                     # Llamar directamente al handler de un solo archivo
                     from src.utils.ai_handler import AIHandler
                     import os
@@ -1095,50 +1113,63 @@ def embed_single_stream(file_id):
 @app.route('/db-explorer')
 @login_required
 def db_explorer_list():
-    """Lista las tablas disponibles en la base de datos."""
-    try:
-        with db._connect() as conn:
-            with conn.cursor() as cur:
-                # Consultar tablas públicas en Postgres
-                cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name")
-                tables = [row[0] for row in cur.fetchall()]
-        return render_template('db_explorer.html', tables=tables)
-    except Exception as e:
-        flash(f"Error al listar tablas: {e}", "danger")
-        return redirect(url_for('dashboard'))
+    """Lista únicamente las tablas habilitadas para el explorador."""
+    # No consultamos `information_schema` para evitar exponer la existencia
+    # de tablas internas (`users`, etc.) que NO queremos mostrar.
+    tables = sorted(DB_EXPLORER_ALLOWED_TABLES)
+    return render_template('db_explorer.html', tables=tables,
+                           allowed_tables=tables)
+
+# Tablas que se pueden inspeccionar desde el panel.
+# Las que NO están aquí (p.ej. `users`) quedan fuera del explorador para no
+# exponer hashes de contraseña ni datos sensibles.
+DB_EXPLORER_ALLOWED_TABLES = {
+    "files",
+    "folders",
+    "bot_logs",
+    "category_folder_cache",
+}
+
+# Columnas que siempre se enmascaran al renderizar, sin importar la tabla.
+DB_EXPLORER_MASKED_COLUMNS = {"password_hash", "embedding"}
+
 
 @app.route('/db-explorer/<table_name>')
 @login_required
 def db_explorer_table(table_name):
-    """Muestra el contenido de una tabla específica."""
-    try:
-        # Prevención básica de inyección: solo permitir nombres alfanuméricos y guiones
-        import re
-        if not re.match(r'^[a-zA-Z0-9_]+$', table_name):
-             flash("Nombre de tabla inválido", "danger")
-             return redirect(url_for('db_explorer_list'))
+    """Muestra el contenido de una tabla específica (sólo whitelisted)."""
+    if table_name not in DB_EXPLORER_ALLOWED_TABLES:
+        flash("Tabla no permitida desde el explorador.", "danger")
+        return redirect(url_for('db_explorer_list'))
 
+    try:
         from psycopg2.extras import RealDictCursor
         with db._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                # LIMIT 500 para no saturar el navegador si la tabla es gigante
+                # table_name está validado contra una whitelist arriba, así que
+                # la interpolación f-string es segura aquí.
                 cur.execute(f"SELECT * FROM {table_name} LIMIT 500")
                 data = cur.fetchall()
-                
-                # Obtener nombres de columnas
-                columns = data[0].keys() if data else []
-                
-        return render_template('db_explorer.html', 
-                               table_name=table_name, 
-                               columns=columns, 
+
+                columns = list(data[0].keys()) if data else []
+
+                # Enmascarar columnas sensibles para no exponerlas en la UI.
+                for row in data:
+                    for col in DB_EXPLORER_MASKED_COLUMNS:
+                        if col in row and row[col] is not None:
+                            row[col] = "••• (oculto) •••"
+
+        return render_template('db_explorer.html',
+                               table_name=table_name,
+                               columns=columns,
                                data=data,
-                               total_rows=len(data))
+                               total_rows=len(data),
+                               allowed_tables=sorted(DB_EXPLORER_ALLOWED_TABLES))
     except Exception as e:
         flash(f"Error al leer la tabla {table_name}: {e}", "danger")
         return redirect(url_for('db_explorer_list'))
         
 from zoneinfo import ZoneInfo
-from datetime import datetime
 
 @app.route('/logs')
 @login_required

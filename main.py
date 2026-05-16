@@ -876,7 +876,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if ok:
                 db.log_event("INFO", "BOT", f"Embedding manual OK: {nombre}")
                 await query.edit_message_text(
-                    rf"✅ *¡Indexado!* `{nombre}` ya es buscable con IA.\n\n"
+                    f"✅ *¡Indexado!* `{nombre}` ya es buscable con IA.\n\n"
                     "Usa /indexar para continuar con los demás o /buscar_ia para buscar.",
                     parse_mode=ParseMode.MARKDOWN
                 )
