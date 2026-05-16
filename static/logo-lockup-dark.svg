@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 200" role="img" aria-label="CloudGram">
+  <title>CloudGram</title>
+  <defs>
+    <linearGradient id="cgld-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"  stop-color="#0A84FF"/>
+      <stop offset="100%" stop-color="#BF5AF2"/>
+    </linearGradient>
+    <linearGradient id="cgld-highlight" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"  stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="cgld-glow" cx="50%" cy="35%" r="65%">
+      <stop offset="0%"  stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="60%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="cgld-stroke" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"  stop-color="#ffffff" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.20"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(20, 20)">
+    <rect x="0" y="0" width="160" height="160" rx="38" ry="38" fill="url(#cgld-grad)"/>
+    <rect x="0" y="0" width="160" height="160" rx="38" ry="38" fill="url(#cgld-glow)"/>
+    <rect x="0" y="0" width="160" height="160" rx="38" ry="38" fill="url(#cgld-highlight)"/>
+    <rect x="0.5" y="0.5" width="159" height="159" rx="37.5" ry="37.5"
+          fill="none" stroke="url(#cgld-stroke)" stroke-width="1"/>
+
+    <g transform="translate(28, 44)" fill="#FFFFFF">
+      <ellipse cx="52" cy="78" rx="42" ry="4" fill="#000000" opacity="0.10"/>
+      <path d="
+        M28 8
+        C 17 8, 8 17, 8 28
+        C 8 29, 8.1 30, 8.4 31
+        C 3.6 33, 0 38, 0 44
+        C 0 51.2, 6 57, 13.2 57
+        L 89 57
+        C 97.2 57, 104 50.3, 104 42
+        C 104 34.6, 98.5 28.5, 91.3 27.5
+        C 90.6 16.2, 81.2 8, 69.8 8
+        C 64.1 8, 59 10.3, 55.3 13.9
+        C 51.7 10.3, 46.7 8, 41.3 8
+        Z" opacity="0.96"/>
+    </g>
+  </g>
+
+  <text x="208" y="124"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', 'Helvetica Neue', sans-serif"
+        font-size="84"
+        font-weight="600"
+        letter-spacing="-3"
+        fill="#f5f5f7">CloudGram</text>
+</svg>
