@@ -1481,6 +1481,103 @@ async def post_init(application):
     await ensure_category_folders()
     db.log_event("INFO", "SISTEMA", "Bot iniciado correctamente y menús registrados.")
 
+    # Notificación de deploy al administrador
+    await notify_admin_deploy(application)
+
+
+async def notify_admin_deploy(application):
+    """Envía un mensaje elegante al admin cada vez que el bot arranca tras un
+    deploy de Render. Usa las env vars expuestas por Render para enriquecer
+    el mensaje (commit, rama, hora). Se omite si:
+      • No estamos en Render (`RENDER` no definido) y `FORCE_DEPLOY_NOTIFY!=1`.
+      • Ya notificamos este mismo commit (deduplicación vía state_store).
+    """
+    from datetime import datetime, timezone
+    from src.utils.telegram_format import RULE, header as fmt_header
+    from src.utils.state_store import state_store
+
+    admin_id_raw = os.getenv("ADMIN_ID", "")
+    admin_ids = [a.strip() for a in admin_id_raw.split(",") if a.strip().isdigit()]
+    if not admin_ids:
+        return
+
+    is_render = bool(os.getenv("RENDER")) or bool(os.getenv("RENDER_SERVICE_NAME"))
+    if not is_render and os.getenv("FORCE_DEPLOY_NOTIFY") != "1":
+        # En local no spameamos.
+        return
+
+    commit_full = os.getenv("RENDER_GIT_COMMIT", "") or ""
+    commit = commit_full[:7] if commit_full else "—"
+    branch = os.getenv("RENDER_GIT_BRANCH") or "main"
+    service = os.getenv("RENDER_SERVICE_NAME") or "CloudGram"
+    external_url = os.getenv("RENDER_EXTERNAL_URL") or ""
+    instance = (os.getenv("RENDER_INSTANCE_ID") or "")[:8]
+
+    # Deduplicación: si ya notificamos este commit, no repetimos (evita spam
+    # si Render reinicia el worker sin nuevo deploy).
+    dedup_key = f"deploy_notify:{commit_full or instance or 'unknown'}"
+    if state_store.get_bool(dedup_key):
+        logger.info("Deploy ya notificado para commit %s — omitiendo.", commit)
+        return
+
+    # Hora local de Bogotá (UTC-5). Apple-style: corto y claro.
+    now_utc = datetime.now(timezone.utc)
+    try:
+        from zoneinfo import ZoneInfo
+        now_local = now_utc.astimezone(ZoneInfo("America/Bogota"))
+        time_str = now_local.strftime("%d %b %Y · %H:%M")
+    except Exception:
+        time_str = now_utc.strftime("%d %b %Y · %H:%M UTC")
+
+    text_parts = [
+        f"🚀 {fmt_header('Deploy completado', f'{service} está online')}",
+        "",
+        RULE,
+        f"• *Rama*  `{branch}`",
+        f"• *Commit*  `{commit}`",
+        f"• *Hora*  `{time_str}`",
+    ]
+    if instance:
+        text_parts.append(f"• *Instancia*  `{instance}`")
+    text_parts.append(RULE)
+    text_parts.append("")
+    text_parts.append("_El bot está procesando peticiones con la última versión._")
+
+    # Botones útiles: ver commit en GitHub si conocemos el repo, abrir el panel.
+    keyboard_rows = []
+    if commit_full and external_url:
+        keyboard_rows.append([
+            InlineKeyboardButton("Abrir panel web", url=external_url),
+        ])
+    elif external_url:
+        keyboard_rows.append([
+            InlineKeyboardButton("Abrir panel web", url=external_url),
+        ])
+
+    reply_markup = InlineKeyboardMarkup(keyboard_rows) if keyboard_rows else None
+    text = "\n".join(text_parts)
+
+    failures = 0
+    for admin in admin_ids:
+        try:
+            await application.bot.send_message(
+                chat_id=int(admin),
+                text=text,
+                parse_mode=ParseMode.MARKDOWN,
+                disable_web_page_preview=True,
+                reply_markup=reply_markup,
+            )
+        except Exception as notify_err:
+            failures += 1
+            logger.warning(f"Fallo notificando deploy a admin {admin}: {notify_err}")
+
+    if failures < len(admin_ids):
+        state_store.set_bool(dedup_key, True, ttl=86400)  # 24h
+        db.log_event(
+            "INFO", "SISTEMA",
+            f"Notificación de deploy enviada (commit={commit}, branch={branch}).",
+        )
+
 async def post_stop(application):
     """Acciones a realizar al detener el bot"""
     print("\n🛑 Deteniendo CloudGram PRO...")

@@ -143,8 +143,14 @@
             padding: 24px 16px;
             display: flex;
             flex-direction: column;
+            margin-left: 0;
             transition: margin-left 0.45s var(--ease);
             z-index: 1000;
+        }
+
+        /* En desktop, .toggled colapsa el sidebar deslizándolo */
+        #wrapper.toggled #sidebar-wrapper {
+            margin-left: calc(-1 * var(--sidebar-w));
         }
 
         .sidebar-brand {
@@ -692,17 +698,25 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script>
     document.addEventListener("DOMContentLoaded", function() {
-        const toggleBtn = document.getElementById("menu-toggle");
-        const sidebarClose = document.getElementById("sidebar-close");
-        const overlay = document.getElementById("sidebar-overlay");
         const wrapper = document.getElementById("wrapper");
 
-        function toggleMenu() {
-            if (wrapper) wrapper.classList.toggle("toggled");
-        }
-        if (toggleBtn) toggleBtn.addEventListener("click", toggleMenu);
-        if (sidebarClose) sidebarClose.addEventListener("click", toggleMenu);
-        if (overlay) overlay.addEventListener("click", toggleMenu);
+        // Event delegation: sobrevive a re-renderings de Datatables, SSE, etc.
+        // Cualquier click sobre #menu-toggle o #sidebar-close → toggle.
+        document.addEventListener("click", function(e) {
+            const t = e.target.closest("#menu-toggle, #sidebar-close, #sidebar-overlay");
+            if (!t || !wrapper) return;
+            e.preventDefault();
+            wrapper.classList.toggle("toggled");
+        });
+
+        // Cerrar el sidebar (en mobile) al clicar un link de navegación.
+        document.querySelectorAll("#sidebar-wrapper .nav-btn").forEach(function(link) {
+            link.addEventListener("click", function() {
+                if (window.innerWidth < 992 && wrapper) {
+                    wrapper.classList.remove("toggled");
+                }
+            });
+        });
 
         // Animar progress bars con su data-width tras 100ms (efecto Apple).
         setTimeout(function() {
