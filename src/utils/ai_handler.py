@@ -705,23 +705,40 @@ class AIHandler:
             })
 
         system_msg = (
-            "Eres un evaluador de relevancia de búsqueda. Te paso una query del "
-            "usuario y una lista de documentos (cada uno con id, name, summary y "
-            "tags). Para CADA documento, devuelve un score de 0.0 a 1.0 que "
-            "represente qué tan bien responde a la query.\n\n"
-            "Reglas:\n"
-            " • 1.0 = el contenido descrito responde directamente a la query.\n"
-            " • 0.7 = relacionado, probablemente útil.\n"
-            " • 0.4 = tangencialmente relacionado (menciona algo de la query "
-            "pero no es lo principal).\n"
-            " • 0.1 = palabra suelta coincide por casualidad.\n"
-            " • 0.0 = no tiene nada que ver.\n\n"
-            "IMPORTANTE: NO te dejes engañar por coincidencias léxicas. Si el "
-            "usuario pide 'fotos con animales' y el documento dice 'bikini con "
-            "estampado de leopardo' eso es 0.1, no 0.8. Si dice 'reunión de "
-            "trabajo' y el documento es una foto familiar, es 0.0.\n\n"
-            "Responde EXCLUSIVAMENTE con JSON válido en este formato exacto:\n"
-            '{"scores": [{"id": <id>, "score": <0..1>, "reason": "<≤12 palabras>"}, ...]}'
+            "Eres un evaluador EXPERTO de relevancia para una búsqueda de "
+            "archivos. Te paso una QUERY del usuario y una lista de DOCUMENTOS "
+            "(cada uno con id, name, summary y tags). Tu trabajo: asignar a "
+            "CADA documento un score 0.0–1.0 según qué tan bien responde a la "
+            "query.\n\n"
+            "REGLAS DE PUNTUACIÓN (sé discriminativo, NO uses todos el mismo "
+            "valor):\n"
+            "  • 0.90-1.00 → responde DIRECTAMENTE la query, es exactamente lo "
+            "que el usuario busca.\n"
+            "  • 0.70-0.89 → muy relevante, el contenido principal incluye "
+            "lo pedido.\n"
+            "  • 0.40-0.69 → parcialmente relevante, lo menciona pero no es "
+            "el foco.\n"
+            "  • 0.10-0.39 → coincidencia léxica casual o tema relacionado "
+            "lejanamente.\n"
+            "  • 0.00-0.09 → no tiene NADA que ver con la query.\n\n"
+            "TRAMPAS QUE EVITAR (no te dejes engañar):\n"
+            "  • Query 'fotos con animales' + summary 'bikini con estampado "
+            "de leopardo' → 0.05 (es ropa con estampado, NO un animal real).\n"
+            "  • Query 'documentos de facturas' + summary 'formulario de "
+            "separación de inmueble' → 0.05 (no es una factura).\n"
+            "  • Query 'fotos de perros' + summary 'familia en celebración' "
+            "→ 0.0 si no menciona perro/mascota real.\n\n"
+            "REQUISITOS DE FORMATO (CRÍTICOS):\n"
+            "  1. DEBES incluir UN score para CADA documento de la lista. "
+            "NO omitas ninguno. Si todos son irrelevantes, devuelve todos "
+            "con score bajo (no respondas con array vacío).\n"
+            "  2. Los scores DEBEN ser variados — si pones el mismo valor "
+            "a 5 documentos, lo estás haciendo mal. Discrimina.\n"
+            "  3. Reason: máximo 12 palabras, en español, explicando POR QUÉ "
+            "ese score.\n\n"
+            "Responde EXCLUSIVAMENTE con JSON válido en este formato:\n"
+            '{"scores": [{"id": <id>, "score": <float 0..1>, '
+            '"reason": "<≤12 palabras>"}, ...]}'
         )
 
         user_msg = json.dumps({
@@ -738,10 +755,11 @@ class AIHandler:
                     {"role": "user", "content": user_msg},
                 ],
                 temperature=0.0,
-                max_tokens=900,
+                max_tokens=1500,
                 response_format={"type": "json_object"},
             )
             raw = response.choices[0].message.content
+            logger.info(f"🤖 LLM reranker raw response: {raw[:400]}...")
             parsed = json.loads(raw)
             scores_by_id = {
                 int(item["id"]): float(item.get("score", 0.0))
@@ -761,18 +779,26 @@ class AIHandler:
                 c['llm_score'] = None
             return head + tail
 
-        # Anotar los candidatos.
+        # Anotar TODOS los candidatos del head. Si el LLM omitió alguno → 0.0
+        # (asumimos que lo descartó por irrelevante).
         for c in head:
             fid = c.get('id')
-            c['llm_score'] = scores_by_id.get(fid)
-            if fid in reasons_by_id:
-                c['llm_reason'] = reasons_by_id[fid]
+            if fid in scores_by_id:
+                c['llm_score'] = scores_by_id[fid]
+                c['llm_reason'] = reasons_by_id.get(fid, '')
+            else:
+                c['llm_score'] = 0.0
+                c['llm_reason'] = '(no incluido por el reranker → irrelevante)'
 
-        # Ordenar el head por llm_score (los None van al final con score 0).
-        head.sort(key=lambda x: (x.get('llm_score') if x.get('llm_score') is not None else -1),
-                  reverse=True)
+        logger.info(
+            "🎯 LLM scoreó %d/%d candidatos (omitidos contados como 0).",
+            len(scores_by_id), len(head),
+        )
 
-        # El tail no fue evaluado por el LLM; lo dejamos al final.
+        # Ordenar el head por llm_score.
+        head.sort(key=lambda x: x.get('llm_score', 0), reverse=True)
+
+        # El tail no fue evaluado por el LLM; lo dejamos al final con None.
         for c in tail:
             c['llm_score'] = None
 

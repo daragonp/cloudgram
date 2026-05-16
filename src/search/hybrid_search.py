@@ -270,20 +270,57 @@ class HybridSearchEngine:
         #    final que verá el usuario).
         fused = self._rrf_fuse(semantic, fulltext, metadata, query_norm)
 
-        # 5. Re-ranking con LLM sobre el head (lo crítico para evitar falsos
-        #    positivos del retrieval: el LLM lee los summaries y decide si
-        #    realmente responden a la query).
+        # 5. Re-ranking con LLM sobre los mejores candidatos. CLAVE: en vez
+        #    de tomar simplemente los top-K del RRF, garantizamos que entran
+        #    los top-N de CADA fuente. Esto evita que un resultado muy
+        #    relevante semánticamente pero ausente en full-text se pierda
+        #    porque el RRF favorece items que aparecen en varias listas.
+        llm_applied = False
         if self._llm_reranker_enabled() and fused:
             try:
-                fused = await self.ai.rerank_search_results(
-                    query=query,
-                    candidates=fused,
-                    top_k=self.LLM_RERANK_TOP,
+                candidates_for_llm = self._select_llm_candidates(
+                    fused, semantic, fulltext, metadata,
                 )
-                logger.info("🤖 Re-ranking LLM aplicado a top %d.",
-                            min(self.LLM_RERANK_TOP, len(fused)))
+                reranked = await self.ai.rerank_search_results(
+                    query=query,
+                    candidates=candidates_for_llm,
+                    top_k=len(candidates_for_llm),  # evaluar TODOS los seleccionados
+                )
+                # `reranked` mantiene anotaciones (`llm_score`, `llm_reason`).
+                # Hay que fusionar de vuelta con `fused` para mantener el resto.
+                llm_by_id = {r['id']: r for r in reranked}
+                merged: List[Dict] = []
+                seen_ids = set()
+                for r in reranked:
+                    merged.append(r)
+                    seen_ids.add(r['id'])
+                for r in fused:
+                    if r['id'] not in seen_ids:
+                        merged.append(r)
+                fused = merged
+                llm_applied = True
+                logger.info("🤖 Re-ranking LLM aplicado a %d candidatos.",
+                            len(candidates_for_llm))
             except Exception as rr_err:
                 logger.warning(f"⚠️ Reranker LLM error: {rr_err}. Sigo con RRF.")
+
+        # 5.b. Si el LLM evaluó el head y TODO es irrelevante
+        #      (mejor llm_score < DISPLAY_FLOOR), asumimos que la query no
+        #      tiene match real.
+        if llm_applied:
+            head_with_llm = [r for r in fused if r.get('llm_score') is not None]
+            if head_with_llm:
+                best_llm = max(r['llm_score'] for r in head_with_llm)
+                if best_llm < self.DISPLAY_FLOOR:
+                    logger.info(
+                        "🪫 El LLM descartó todo el top (mejor=%.2f<%.2f). "
+                        "Devolviendo vacío para la query '%s'.",
+                        best_llm, self.DISPLAY_FLOOR, query,
+                    )
+                    return []
+                # Si el LLM evaluó, sólo conservamos los que él evaluó:
+                # confiamos en su juicio sobre los más prometedores.
+                fused = head_with_llm
 
         # 6. Asignar score FINAL absoluto al usuario.
         for item in fused:
@@ -397,6 +434,42 @@ class HybridSearchEngine:
         if top_sem < self.SEMANTIC_FLOOR and not has_literal:
             return True
         return False
+
+    def _select_llm_candidates(self, fused, semantic, fulltext, metadata):
+        """Selecciona qué candidatos enviar al LLM reranker.
+
+        Estrategia: garantizar diversidad — incluir los TOP-N de cada fuente
+        individual + completar con el top del RRF. Esto evita que un item
+        muy relevante semánticamente pero ausente del full-text se pierda
+        porque el RRF favorece items que aparecen en múltiples listas.
+        """
+        TOP_PER_SOURCE = 6  # top de cada fuente garantizado
+        TOTAL_BUDGET = 15   # presupuesto total para el LLM
+
+        selected: List[Dict] = []
+        seen: Set[int] = set()
+
+        for source_list in (semantic, fulltext, metadata):
+            for item in source_list[:TOP_PER_SOURCE]:
+                fid = item.get('id')
+                if fid is None or fid in seen:
+                    continue
+                enriched = next((r for r in fused if r['id'] == fid), item)
+                selected.append(enriched)
+                seen.add(fid)
+                if len(selected) >= TOTAL_BUDGET:
+                    return selected
+
+        for item in fused:
+            fid = item.get('id')
+            if fid in seen:
+                continue
+            selected.append(item)
+            seen.add(fid)
+            if len(selected) >= TOTAL_BUDGET:
+                break
+
+        return selected
 
     def _rrf_fuse(self, semantic, fulltext, metadata,
                   query_norm: str) -> List[Dict]:
